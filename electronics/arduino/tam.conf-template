@@ -1,0 +1,5 @@
+PORT="/dev/ttyUSB0"
+SPEED="57600"
+#SKETCH="iridia_tam_ircom"
+SKETCH="iridia_tam_v4_rB_xbee"
+

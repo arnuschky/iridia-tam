@@ -1,0 +1,12 @@
+Partlist exported from /home/abrutschy/shared_home/Projects/iridia-tam.git/electronics/eagle/projects/iridia-tam-v4/iridia-tam-right-board.sch at 11/30/12 3:47 PM
+
+Assembly variant: 
+
+Part       Value             Device             Package           Description                                                        
+IR_LED_R   SFH 4258          LEDP-LCC-4         P-LCC-4           LED                                                                
+IR_TRANS_R SFH 320 FA        LEDP-LCC-2         P-LCC-2           LED                                                                
+R20        18                R-EU_R0805         R0805             RESISTOR, European symbol                                          
+R21        2.2               R-EU_R0805         R0805             RESISTOR, European symbol                                          
+R22        2.2               R-EU_R0805         R0805             RESISTOR, European symbol                                          
+R23        18                R-EU_R0805         R0805             RESISTOR, European symbol                                          
+RGB_LED_R  LRTB_G6TG         MULTILED_LRTB_G6TG P-LCC-6_TOPLED    6-lead MULTILED® Enhanced optical Power LED (ThinFilm® / ThinGaN®) 

@@ -1,0 +1,8 @@
+*.iml
+.idea
+*.log
+out
+build
+*.log.[1-9][0-9]*
+.project
+.classpath
