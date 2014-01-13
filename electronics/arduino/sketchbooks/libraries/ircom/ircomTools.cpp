@@ -22,7 +22,7 @@
 #define IRCOM_TOOLS_C
 
 #include <stdio.h>
-#include "e_ad_conv.h"
+//#include "signal_sampler.h"
 
 #include "ircom.h"
 #include "ircomTools.h"

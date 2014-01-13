@@ -27,22 +27,27 @@
 #include "ircom.h"
 #include "ircomTools.h"
 #include "ircomSend.h"
-#include "e_ad_conv.h"
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
 //NEW IMPLEMENTATION PWM PINS
 #include <SoftwareSerial.h>
 #include <Arduino.h>
-//#include "TLC59116.h"
 
-#define AUX_ENABLE_PIN   9
+
+void ps(char *fmt, ... )
+{
+  char tmp[128]; // resulting string limited to 128 chars
+  va_list args;
+  va_start(args, fmt );
+  vsnprintf(tmp, 128, fmt, args);
+  va_end (args);
+  Serial.print(tmp);
+}
 
 // interface for end user
 void ircomSend (long int value)
 {	
-	//Serial.print(LED);
-	//tlcIRCOM->setPinPWM(LED, 0);
 	// stop processing messages
     ircomPause(1);
 
@@ -55,16 +60,10 @@ void ircomSend (long int value)
     else 
 	ircomSendData.interruptedListening = 0;
 
-    //Stop AD interrupt
-    e_ad_scan_off();
-
-//    // prevent ad from triggering prox sampling
-//    //ad_disable_proximity = 1;
-
     //Precalculated timings for sender
     ircomSendCalcSending(value);
 
-//    // initialise fsm
+	// initialise fsm
     ircomSendData.done = 0;
     ircomSendData.currentBit = 0;
     ircomSendData.pulseState = 0;
@@ -75,7 +74,6 @@ void ircomSend (long int value)
 
     // process messages again
     ircomPause(0);
-	//Serial.print("SEND\n");
 }
 
 // implement precalculated timings for sender
@@ -147,37 +145,18 @@ inline int ircomIsSending ()
 // FSM Write : entry point
 void ircomSendMain()
 {
-	//Serial.print("ENTER\n");
-	
-	//tlcIRCOM->setPinPWM(LED, 0);	
-	//tlcIRCOM->setPinMode(LED, PM_PWM);
-	//tlcIRCOM->setPinPWM(LED, 0);
-	//Serial.print("IM IN\n");
-
     // do the hardware signal toggle
     if (ircomSendData.pulseState == 0)
     {
 	if (ircomSendData.type == IRCOM_SEND_OMNI)
 	{
-/*	    PULSE_IR3 = 1;*/
-/*	    PULSE_IR2 = 1;*/
-/*	    PULSE_IR1 = 1;*/
-	    //PORTC |= 0x08;
-		PORTB &= 0xFE;
-		//tlcIRCOM->setPinPWM(LED_PROX, 255);
-		//tlcIRCOM.setPinPWM(LED_GREEN_T, 255);
-		//Serial.print("DONE\n");
+		PORTB |= 0x02;
 	}
 	else
 	{
 	    switch (ircomSendData.sensor)
 	    {
-	    //case 0 : PORTC |= 0x08; break;
-		case 0 : PORTB &= 0xFE;
-//		case 0 : tlcIRCOM->setPinPWM(LED_PROX, 255); break;
-/*	    case 1 : PULSE_IR1 = 1; break;*/
-/*	    case 2 : PULSE_IR2 = 1; break;*/
-/*	    case 3 : PULSE_IR3 = 1; break;*/
+		case 0 : PORTB |= 0x02;
 	    }
 	}
 	
@@ -186,24 +165,14 @@ void ircomSendMain()
     else
     {
 	if (ircomSendData.type == IRCOM_SEND_OMNI)
-	{
-/*	    PULSE_IR3 = 0;*/
-/*	    PULSE_IR2 = 0;*/
-/*	    PULSE_IR1 = 0;*/
-	    //PORTC &= 0xF7;      
-		PORTB |= 0x01;      
-		//tlcIRCOM->setPinPWM(LED_PROX, 0);
+	{      
+		PORTB &= 0xfd;      
 	}
 	else
 	{
 	    switch (ircomSendData.sensor)
 	    {
-	    //case 0 : PORTC &= 0xF7; break;
-		case 0 : PORTB |= 0x01; break;
-		//case 0 : tlcIRCOM->setPinPWM(LED_PROX, 0); break;
-/*	    case 1 : PULSE_IR1 = 0; break;*/
-/*	    case 2 : PULSE_IR2 = 0; break;*/
-/*	    case 3 : PULSE_IR3 = 0; break;*/
+		case 0 : PORTB &= 0xfd; break;
 	    }
 	}
 	
@@ -215,7 +184,6 @@ void ircomSendMain()
     if (ircomSendData.switchCounter >= ircomSendData.switchCountMax){
       	ircomSendNextBit();
     }else {
-		//TCNT1 = ircomSendData.durations[ircomSendData.currentBit-1];
 		TCNT2 = ircomSendData.durations[ircomSendData.currentBit-1];
 		
     }
@@ -228,7 +196,6 @@ void ircomSendNextBit()
     {
 		
 		ircomSendData.switchCounter = 0;
-		//TCNT1 = ircomSendData.durations[ircomSendData.currentBit];
 		TCNT2 = ircomSendData.durations[ircomSendData.currentBit];
 		
 		ircomSendData.switchCountMax = ircomSendData.switchCounts[ircomSendData.currentBit++];
@@ -238,36 +205,23 @@ void ircomSendNextBit()
     else
     {
 		// make sure irs go off at the end of the message ...
-	/*	PULSE_IR3 = 0;*/
-	/*	PULSE_IR2 = 0;*/
-	/*	PULSE_IR1 = 0;*/
-		//PORTC &= 0xF7;
-		PORTB |= 0x01;
-		//tlcIRCOM->setPinPWM(LED_PROX, 0);
+		PORTB &= 0xfd;
 	
 		ircomSendData.done = 1;
-		//PR1 = (IRCOM_RECEIVESPEED * MICROSEC) / 8.0;
-		//TCNT1 = 0xFA3D; 
-		//TCNT1 = 0xF476;            // T = 184 us
-		//TCNT1 = 0xFC70;            // T = 57 us
 
-		TCNT2 = 210;            // T = 184 us
-		
-
+		TCNT2 = 210;            // T = 184 us IRcom idle period
 		ircomData.fsm = IRCOM_FSM_IDLE;
 
-		// reenable prox in ad
-		//ad_disable_proximity = 0;
 
-		
+		// Reset sampling status: default sampling window size and reset indexes
+		e_sampling_off();
+		e_sampler_default_sampling_window();
+		e_sampling_reset();
+
 		// restart listening immediately if previously interrupted
-		if (ircomSendData.interruptedListening == 1)
+		if (ircomSendData.interruptedListening == 1){
 			ircomListen();
-
-		// restart AD interrupt
-		e_ad_scan_reset();
-		e_ad_scan_on();
-		//e_init_ad_scan();
+		}
     }
 }
 

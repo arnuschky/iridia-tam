@@ -12,14 +12,14 @@ TLC59116::TLC59116()
 {
 }
 
-void TLC59116::begin(uint8_t address_)
+void TLC59116::begin(uint8_t address_, bool enable_high_speed, bool enable_internal_pullups)
 {
   address = address_;
   memset(&rawPinModes, 0, sizeof(rawPinModes));
 
   // initialize 
-  I2c.setSpeed(true); // set 400Khz I2C
-  //I2c.pullup(false);   // enable internal pullups TODO: fix this on board!
+  I2c.setSpeed(enable_high_speed);
+  I2c.pullup(enable_internal_pullups);
   I2c.begin();
 
   I2c.write(address, 0x00, (uint8_t)0x01);   // mode register 1: broadcast on, [5bit]=0 turns on oscillator

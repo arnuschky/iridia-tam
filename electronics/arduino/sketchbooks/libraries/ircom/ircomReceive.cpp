@@ -24,15 +24,57 @@
 #include "ircom.h"
 #include "ircomTools.h"
 #include "ircomReceive.h"
-#include "e_ad_conv.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <stdio.h>
 
 #include <Arduino.h>
 
+#define LAST_BIT 1 //Last bit of a word
+#define NOT_LAST_BIT 0 //All the other bits of the word, excluding the last and the first (only in case we have to take 6 samples with the first)
+#define FIRST_BIT 2 //First bit of the word in case the last of the previous word had taken one sample less then necessary
 
+#define RUNNING 0
+#define RANDOM_WAIT 1
+
+#define MIN_WAIT_INTERVAL 1
+#define MAX_WAIT_INTERVAL 5
+
+//Sampling
+unsigned int buffer1[NB_IR_SENSORS * SAMPLING_WINDOW + 1];
+unsigned int buffer2[NB_IR_SENSORS * SAMPLING_WINDOW + 1];
+
+unsigned int* sampling;
+unsigned int temp;
+unsigned int* received;
+unsigned int sampling_window = SAMPLING_WINDOW;
+
+volatile char array_filled = 0;
+volatile unsigned int e_last_ir_scan_id = 0;
+unsigned int wait_fsm = RUNNING;
+unsigned long nowReceive = 0;
+unsigned long randomWaitSince = 0;
+unsigned int randomInterval = 0;
+
+
+const byte prescaleBits = B010;    // see Table 18-1 or data sheet
+volatile byte sampling_enable  = 0; // 0 disables capture, 1 enables
+ 
+
+volatile byte is_mark = 0; // Flag set to 1 when the bit is a mark (0)
+int synch_bit_index = -2;
+int waiting_second_buffer = 0; // Flag = true when we are waiting for the second buffer of 5 samples that compose a zero
+int odd_edges = 0; //Flag = 1 when the total number of 1 inside a word is odd
+int bit = 0; // The type of bit we are receiving
+unsigned long totalDur = 0; // Total duration in us of a window of samples
+
+const int prescale = 8;            // prescale factor (each tick 0.5 us @16MHz)
+// calculate time per counter tick in us
+const long precision = (1000000/(F_CPU/1000)) * prescale; 
 
 void pr(char *fmt, ... )
 {
@@ -55,17 +97,13 @@ void ircomListen ()
     ircomReceiveData.done = 0;
     ircomReceiveData.receiving = 0;
     ircomReceiveData.state = 0;
+	odd_edges = 0;
+	
+	waiting_second_buffer = 0;
     ircomData.fsm = IRCOM_FSM_RECEIVE;
-    //ircomReceiveData.distance = -1;
     
-		  
-    //Serial.print("LISTEN\n");
-    // set interrupt trigger speed
-    //PR1 = (IRCOM_RECEIVESPEED * MICROSEC) / 8.0;
-	//TCNT1 = 0xFA3D;            // T = 92 us
-	//TCNT1 = 0xF476;            // T = 184 us
+	e_sampling_on();
 	TCNT2 = 210;
-	//TCNT2 = 0;
 
     // process messages again
     ircomPause(0);
@@ -100,11 +138,19 @@ void ircomStopListening ()
     ircomReceiveData.receiving = 0;    
     ircomReceiveData.state = 0;
     
-    // reenable prox in ad
-    //ad_disable_proximity = 0;
-    
+	e_sampling_off();
     // set fsm in idle mode
     ircomData.fsm = IRCOM_FSM_IDLE;
+	// Reset the receiving state machine
+	ircomResetReceive();
+}
+
+void ircomResetReceive(){
+	odd_edges = 0;
+	waiting_second_buffer = 0;
+	synch_bit_index = -2;	
+	bit = NOT_LAST_BIT;
+	wait_fsm = RUNNING;
 }
 
 
@@ -116,75 +162,143 @@ void ircomReceiveMain()
 {
     switch (ircomReceiveData.state)
     {
-    case 0 :
-	ircomReceiveListen(); break;
-    case 1 : 
-	ircomReceiveWord(); break;
+		case 0 :
+			ircomReceiveListen(); break;
+		case 1 : 
+			ircomReceiveWord(); break;
     }
 }
 
 void ircomReceiveListen()
-{
-
-    //Serial.print("RECEIVE LISTEN\n");
-    int maxSensor;
-    int switchCount = -1;
-    int shift, u;
-    int min = 1024;
-    int max = 0;
+{	
+	//Recognition of the first two bits (0) of synchronization
 	
-    // process signal only when a full window is available
-    if (e_ad_is_array_filled() == 0){
+	int i;
+	totalDur = 0;
+	int first_sample;
+	unsigned long duration;
+
+	if(!waiting_second_buffer){
+		if(bit == FIRST_BIT){
+			// We have to handle the 6 samples we got. The previous word conteined an even number of 1. Then we go back to the default window size
+			e_sampler_default_sampling_window();
+			bit = NOT_LAST_BIT;
+			for(i = 2; i < SAMPLING_WINDOW + 1; i++){ 
+			  duration = received[i] * precision / 1000; // pulse duration in microseconds
+			  if(duration > 1000){
+			  	// noise, an interval greater than 1000 us is not correct. 
+				// We try to recover by keeping this interval as first for a new message transmission
+				ircomReceiveData.done = 1;
+				ircomReceiveData.error = 1;
+				ircomReceiveData.receiving = 0;    
+				ircomReceiveData.state = 0;
+				e_sampling_off();
+				e_sampler_default_sampling_window();
+				e_sampling_reset_with_samples(SAMPLING_WINDOW + 1 - i);	
+				ircomResetReceive();
+
+				for(int tempIndex = i; tempIndex < SAMPLING_WINDOW + 1; tempIndex++){
+					sampling[tempIndex-i] = received[tempIndex];
+				}
+				// set fsm in idle mode (except continuous listening mode...)
+				if (ircomReceiveData.continuousListening == 1){							
+					ircomListen();				
+				} else {
+					ircomData.fsm = IRCOM_FSM_IDLE;
+				}
+				return;
+              }
+
+			  if(duration > 0) {
+				totalDur += duration;
+			  }      
+			}
+		} else {
+			// The first sample is discarded for the first bit of a word
+			for(i = 1; i < SAMPLING_WINDOW; i++){ 
+				  duration = received[i] * precision / 1000; // pulse duration in microseconds
+				  if(duration > 0) {
+					totalDur += duration;
+				  } 
+				  if(duration > 1000){
+				  	// noise, an interval greater than 1000 us is not correct. 
+					// We try to recover by keeping this interval as first for a new message transmission
+					ircomReceiveData.done = 1;
+					ircomReceiveData.error = 1;
+					ircomReceiveData.receiving = 0;    
+					ircomReceiveData.state = 0;
+					e_sampling_off();
+					e_sampler_default_sampling_window();
+					e_sampling_reset_with_samples(SAMPLING_WINDOW - i);	
+					ircomResetReceive();
+
+					for(int tempIndex = i; tempIndex < SAMPLING_WINDOW; tempIndex++){
+							sampling[tempIndex-i] = received[tempIndex];
+					}
+
+					// set fsm in idle mode (except continuous listening mode...)
+					if (ircomReceiveData.continuousListening == 1){			
+						ircomListen();
+					} else {
+						ircomData.fsm = IRCOM_FSM_IDLE;
+					}
+					return;
+              	  }     
+			}
+		}
+	} else {
+		synch_bit_index++;
+		waiting_second_buffer = 0;
+		if(synch_bit_index == 0){
+			// We have received the first 2 bits of synchronization correctly, we can now receive the payload
+			// ok setup everything : start receiveing word, record all
+			ircomReceiveData.currentBit = 0;
+			ircomReceiveData.done = 0;
+			ircomReceiveData.error = 0;
+			ircomReceiveData.receiving = 1;    
+			ircomReceiveData.state = 1;
+			return;
+		}
 		return;
 	}
-	/********************************************************************************************************TEMP*/
 
-    maxSensor = ircomReceiveGetMaxSensor();
-    
-    // no significant modulation perceived ?
-    if (maxSensor < 0){
-//		Serial.print("NO MODULATION\n");
+	if(totalDur <= IRCOM_HALF_BIT_TOT_DURATION_MAX && !waiting_second_buffer){
+		// MARK. We have to take other 5 samples
+		waiting_second_buffer = 1;
+		return;		
+	}else if(totalDur > IRCOM_HALF_BIT_TOT_DURATION_MAX && totalDur <= IRCOM_COMPLETE_BIT_TOT_DURATION_MAX && !waiting_second_buffer) {
+		// SPACE. The 5 samples we have are enough
+		waiting_second_buffer = 0;
+		odd_edges = !odd_edges;
+		synch_bit_index++;
+	} else {
+		// no significant modulation perceived ?
+		e_sampling_off();
+		e_sampler_default_sampling_window();
+		e_sampling_reset();
+		ircomResetReceive();
+		if (ircomReceiveData.continuousListening == 1){
+			//There has been an error in the communication. To recover from this situation we wait a random number of milliseconds before starting sampling again
+			wait_fsm = RANDOM_WAIT;
+			randomWaitSince = millis();
+			randomInterval = random(MIN_WAIT_INTERVAL, MAX_WAIT_INTERVAL);
+			ircomListen();
+			
+		} else {
+			ircomData.fsm = IRCOM_FSM_IDLE;
+		}
 		return;
 	}
 	
-	/* no need for demodulating the signal if no signal has been detected
-
-    //ircomReceiveData.receivingSensor = maxSensor;
-    if (maxSensor >= 0)
-		switchCount = ircomReceiveDemodulate(1);
-
-    // no significant signal perceived ?
-    if (switchCount < IRCOM_DETECTION_THRESHOLD_SWITCH){
-		return;
-    }
-    
-    	*/
-    
-    // first thing, find out the shift of the signal
-    for (shift = 0, u = maxSensor; shift < IRCOM_SAMPLING_WINDOW; shift++, u += IRCOM_NB_IR_SENSORS){
-		int s = ad_received[u];
-		if (s > max)
-			max = s;
-		if (s < min)
-			min = s;
-		if (max - min >= IRCOM_DETECTION_THRESHOLD_AMPLITUDE)
-			break;
-    }
-	//Serial.print("Shift: ");
-	//Serial.println(shift);
-    // skip samples, restart sampling the 3rd bit only (2nd is already on the way, not synced)
-    e_ad_skip_samples(IRCOM_SAMPLING_WINDOW - e_last_ir_scan_id + shift);
-
-    // prevent ad from triggering prox sampling
-    //ad_disable_proximity = 1;
-
-    // ok setup everything : start receiveing word, record all
-    ircomReceiveData.currentBit = 0;
-    //ircomReceiveData.receivingSensor = maxSensor;
-    ircomReceiveData.done = 0;
-    ircomReceiveData.error = 0;
-    ircomReceiveData.receiving = 1;    
-    ircomReceiveData.state = 1;
+	if(synch_bit_index == 0){
+		// We have received the first 2 bits of synchronization correctly, we can now receive the payload
+		// ok setup everything : start receiveing word, record all
+		ircomReceiveData.currentBit = 0;
+		ircomReceiveData.done = 0;
+		ircomReceiveData.error = 0;
+		ircomReceiveData.receiving = 1;    
+		ircomReceiveData.state = 1;
+	}
 }
 
 // FSM Receive, state 2
@@ -193,193 +307,279 @@ void ircomReceiveWord()
 {
     int signal;
     long int value;
-    
-    // process signal only when a full window is available
-    if (e_ad_is_array_filled() == 0){
-
-//		if(prova){
-//			Serial.print("Array not filled\n");
-//		} 		
-		return;
-	}
-
-    signal = ircomReceiveDemodulate(0);
-
-    // no significant signal perceived ?
-    if (signal < 0){
-		// stop receiveing, discard message
-		ircomReceiveData.done = 1;
-		ircomReceiveData.error = 1;
-		ircomReceiveData.receiving = 0;    
-		ircomReceiveData.state = 0;
-
-		// reenable prox in ad
-		//ad_disable_proximity = 0;
-
-		// set fsm in idle mode (except continuous listening mode...)
-		if (ircomReceiveData.continuousListening == 1)
-			ircomListen();
-		else
-			ircomData.fsm = IRCOM_FSM_IDLE;
-
-		return;
-    }
-    ircomReceiveData.word[ircomReceiveData.currentBit++] = signal;
+	int i;
+	totalDur = 0;
+	unsigned long duration;
 	
-    // end of message ?
-    if (ircomReceiveData.currentBit >= IRCOM_WORDSIZE + 2){
-		
-		// evaluate CRC
-		ircomReceiveData.error = ircomReceiveCheckCRC();
+	switch(bit){
+		case NOT_LAST_BIT: {
+			// We are not receiveing the LAST BIT of the word
+			if(!waiting_second_buffer){
+				for(i = 1; i < SAMPLING_WINDOW; i++){ 
+					duration = received[i] * precision / 1000; // pulse duration in microseconds
+					if(duration > 0) {
+						totalDur += duration;
+					} 
+					if(duration > 1000){
+					  	// noise, an interval greater than 1000 us is not correct. 
+						// We try to recover by keeping this interval as first for a new message transmission
+						ircomReceiveData.done = 1;
+						ircomReceiveData.error = 1;
+						ircomReceiveData.receiving = 0;    
+						ircomReceiveData.state = 0;
+						e_sampling_off();
+						e_sampler_default_sampling_window();
+						e_sampling_reset_with_samples(SAMPLING_WINDOW - i);	
+						ircomResetReceive();
 
-		// stop receiving
-		ircomReceiveData.done = 1;
-		ircomReceiveData.receiving = 0;    
-		ircomReceiveData.state = 0;
-		//Set distance and direction
-		//ircomReceiveData.distance = ircomEstimateDistance ( (int) ircomReceiveData.distance);
-		//ircomReceiveData.direction = ircomEstimateDirection( ircomReceiveData.receivingSensor); 
-
-		// record in the msg queue
-		value = ircomBin2Int(ircomReceiveData.word);
-		ircomPushMessage(value, 
-				 //ircomReceiveData.distance, 
-				 //ircomReceiveData.direction, 
-				 //ircomReceiveData.receivingSensor, 
-				 ircomReceiveData.error);
-
-		// reenable prox in ad
-		//ad_disable_proximity = 0;
-
-		// set fsm in idle mode (except continuous listening mode...)
-		if (ircomReceiveData.continuousListening == 1)
-			ircomListen();
-		else
-			ircomData.fsm = IRCOM_FSM_IDLE;
-
-		return;	
-    }
-}
-
-int ircomReceiveGetMaxSensor()
-{
-    //find the ir sensor with most interesting signal
-    int i, j, min, max, index;
-
-    int maxDiff = 0;
-    int maxSensor = -1;
-    int v;
-
-    for (i = 0; i < IRCOM_NB_IR_SENSORS; i++)
-    {
-		//int index = i, j = 0, min = 1024, max = 0;
-		min = 1024;
-		max = 0;
-		index = i;
-		
-		for (j = 0; j < IRCOM_SAMPLING_WINDOW; j++)
-		{
-			v = ad_received[index];
-			if (v < min)
-			{
-				min = v;
+						for(int tempIndex = i; tempIndex < SAMPLING_WINDOW; tempIndex++){
+							sampling[tempIndex-i] = received[tempIndex];
+						}
+						// set fsm in idle mode (except continuous listening mode...)
+						if (ircomReceiveData.continuousListening == 1){		
+							ircomListen();
+						} else {
+							ircomData.fsm = IRCOM_FSM_IDLE;
+						}
+						return;
+          			}     
+				}
+			} else {
+				waiting_second_buffer = 0;
+				ircomReceiveData.word[ircomReceiveData.currentBit++] = IRCOM_MARK;		
+				if(ircomReceiveData.currentBit == IRCOM_WORDSIZE + 1){
+					//For the last bit of the word we take one sample less, since the bit might have one edge less from the others
+					e_sampler_decrease_sampling_window();
+					bit = LAST_BIT;
+				}
+				return;
 			}
-			else if (v > max)
-			{
-				max = v;
+	
+			if(totalDur <= IRCOM_HALF_BIT_TOT_DURATION_MAX && !waiting_second_buffer){
+				// MARK. We have to take other 5 samples
+				waiting_second_buffer = 1;
+				return;	
+			} else if(totalDur > IRCOM_HALF_BIT_TOT_DURATION_MAX && totalDur <= IRCOM_COMPLETE_BIT_TOT_DURATION_MAX && !waiting_second_buffer) {
+				// SPACE. The 5 samples we have are enough
+				waiting_second_buffer = 0;
+				odd_edges = !odd_edges;
+				ircomReceiveData.word[ircomReceiveData.currentBit++] = IRCOM_SPACE;
+			} else {
+				// no significant modulation perceived ?
+				// stop receiveing, discard message
+				ircomReceiveData.done = 1;
+				ircomReceiveData.error = 1;
+				ircomReceiveData.receiving = 0;    
+				ircomReceiveData.state = 0;
+				e_sampler_default_sampling_window();
+				e_sampling_reset();
+				ircomResetReceive();
+
+				// set fsm in idle mode (except continuous listening mode...)
+				if (ircomReceiveData.continuousListening == 1){
+					//There has been an error in the communication. To recover from this situation we wait a random number of milliseconds before starting sampling again
+					wait_fsm = RANDOM_WAIT;
+					randomWaitSince = millis();
+					randomInterval = random(MIN_WAIT_INTERVAL, MAX_WAIT_INTERVAL);
+					ircomListen();
+					
+				} else {
+					e_sampling_off();
+					ircomData.fsm = IRCOM_FSM_IDLE;
+				}
+				return;
 			}
-			index += IRCOM_NB_IR_SENSORS;
+
+			if(ircomReceiveData.currentBit == IRCOM_WORDSIZE + 1){
+				//For the last bit of the word we take one sample less, since the bit might have one edge less than the others
+				e_sampler_decrease_sampling_window();
+				bit = LAST_BIT;
+			}	
+			break;
 		}
+		case LAST_BIT: {
+			// LAST BIT of the word
+			if(!waiting_second_buffer){
+				// We have only SAMPLING_WINDOW - 1 samples and we ignore the first as usual
+				for(i = 1; i < (SAMPLING_WINDOW - 1); i++){ 
+					duration = received[i] * precision / 1000; // pulse duration in microseconds
+					  
+					if(duration > 0) {
+						totalDur += duration;
+					}
+					if(duration > 1000){
+					  	// noise, an interval greater than 2000 us is not correct. 
+						// We try to recover by keeping this interval as first for a new message transmission
+						ircomReceiveData.done = 1;
+						ircomReceiveData.error = 1;
+						ircomReceiveData.receiving = 0;    
+						ircomReceiveData.state = 0;
+						e_sampling_off();
+						e_sampler_default_sampling_window();
+						e_sampling_reset_with_samples(SAMPLING_WINDOW - 1 - i);	
+						ircomResetReceive();
+
+						for(int tempIndex = i; tempIndex < SAMPLING_WINDOW - 1; tempIndex++){
+							sampling[tempIndex-i] = received[tempIndex];
+						}
+						// set fsm in idle mode (except continuous listening mode...)
+						if (ircomReceiveData.continuousListening == 1){
+							ircomListen();
+						} else {
+							ircomData.fsm = IRCOM_FSM_IDLE;
+						}
+						return;
+				      }  
+				 }
+			} else {
+				// The last bit is a 0. In both cases (odd or even number of 1) we can go back to the default window size
+				e_sampler_default_sampling_window();
+				waiting_second_buffer = 0;
+				bit = NOT_LAST_BIT;
+				ircomReceiveData.word[ircomReceiveData.currentBit++] = IRCOM_MARK;
+				// end of message
+				// evaluate CRC
+				ircomReceiveData.error = ircomReceiveCheckCRC();
+				if(ircomReceiveData.error != 0){
+					e_sampling_reset();
+				}
+
+				// stop receiving
+				ircomReceiveData.done = 1;
+				ircomReceiveData.receiving = 0;    
+				ircomReceiveData.state = 0;
+				synch_bit_index = -2;
+				odd_edges = 0;
+	
+				// record in the msg queue
+				value = ircomBin2Int(ircomReceiveData.word);
+				ircomPushMessage(value, 
+						 ircomReceiveData.error);
+
+
+				// set fsm in idle mode (except continuous listening mode...)
+				if (ircomReceiveData.continuousListening == 1){
+					e_sampling_off();
+					if(ircomReceiveData.error != 0){
+						//There has been an error in the communication. To recover from this situation we wait a random number of milliseconds before starting sampling again
+						wait_fsm = RANDOM_WAIT;
+						e_sampler_default_sampling_window();
+						e_sampling_reset();
+						ircomResetReceive();
+						randomWaitSince = millis();
+						randomInterval = random(MIN_WAIT_INTERVAL, MAX_WAIT_INTERVAL);
+					}					
+					ircomListen();
+					
+				} else {
+					e_sampling_off();
+					if(ircomReceiveData.error != 0){
+						e_sampler_default_sampling_window();
+						e_sampling_reset();
+						ircomResetReceive();
+					}
+					ircomData.fsm = IRCOM_FSM_IDLE;
+				}
+
+				return;	
+			}
+			
+			if(totalDur <= IRCOM_HALF_LAST_BIT_TOT_DURATION_MAX && !waiting_second_buffer){
+				// MARK. We have to take other 5 samples
+				if(!odd_edges){
+					//If the last bit is a 0 and the number of 1 in the word is even, we have to take other 6 samples to complete the bit
+					e_sampler_increase_sampling_window();
+				} else {
+					//If the last bit is a 0 and the number of 1 in the word is odd, we have to take other 5 samples to complete the bit
+					e_sampler_default_sampling_window();
+				}
+				waiting_second_buffer = 1;
+				return;	
+			} else if(totalDur > IRCOM_HALF_LAST_BIT_TOT_DURATION_MAX && totalDur <= IRCOM_COMPLETE_LAST_BIT_TOT_DURATION_MAX && !waiting_second_buffer) {
+				// SPACE. The 5 samples we have are enough
+				waiting_second_buffer = 0;
+				odd_edges = !odd_edges;
+				if(!odd_edges){
+					//The last bit is a 1 and the number of 1 in the word is even with this last one, we will have to take 6 samples in the first bit of the next word (and skip the first 2)
+					e_sampler_increase_sampling_window();
+					// The state in which we handle the 6 samples of the first bit of the next word
+					bit = FIRST_BIT;
+				} else {
+					//The last bit is a 1 and the number of 1 in the word is odd with this last one, the 4 samples we took are enough
+					e_sampler_default_sampling_window();
+					bit = NOT_LAST_BIT;
+				}
 				
-		if (max - min > maxDiff)
-		{
-			maxDiff = max - min;
-			maxSensor = i;
+				ircomReceiveData.word[ircomReceiveData.currentBit++] = IRCOM_SPACE;
+				// evaluate CRC
+				ircomReceiveData.error = ircomReceiveCheckCRC();
+				
+				
+				// stop receiving
+				ircomReceiveData.done = 1;
+				ircomReceiveData.receiving = 0;    
+				ircomReceiveData.state = 0;
+				synch_bit_index = -2;
+				odd_edges = 0;
+		
+				// record in the msg queue
+				value = ircomBin2Int(ircomReceiveData.word);
+				ircomPushMessage(value, 
+						 ircomReceiveData.error);
+
+				// set fsm in idle mode (except continuous listening mode...)
+				if (ircomReceiveData.continuousListening == 1){
+					e_sampling_off();
+					if(ircomReceiveData.error != 0){
+						wait_fsm = RANDOM_WAIT;
+						e_sampler_default_sampling_window();
+						e_sampling_reset();
+						ircomResetReceive();
+						randomWaitSince = millis();
+						randomInterval = random(MIN_WAIT_INTERVAL, MAX_WAIT_INTERVAL);
+					}					
+					ircomListen();
+					
+				} else {
+					e_sampling_off();
+					if(ircomReceiveData.error != 0){
+						e_sampler_default_sampling_window();
+						e_sampling_reset();
+						ircomResetReceive();
+					}
+					ircomData.fsm = IRCOM_FSM_IDLE;
+				}
+
+				return;	
+
+			} else {
+				// no significant modulation perceived ?
+				// stop receiveing, discard message
+				ircomReceiveData.done = 1;
+				ircomReceiveData.error = 1;
+				ircomReceiveData.receiving = 0;    
+				ircomReceiveData.state = 0;
+				
+				e_sampler_default_sampling_window();
+				e_sampling_reset();
+				ircomResetReceive();
+
+				// set fsm in idle mode (except continuous listening mode...)
+				if (ircomReceiveData.continuousListening == 1){
+					//There has been an error in the communication. To recover from this situation we wait a random number of milliseconds before starting sampling again
+					wait_fsm = RANDOM_WAIT;
+					randomWaitSince = millis();
+					randomInterval = random(MIN_WAIT_INTERVAL, MAX_WAIT_INTERVAL);
+					ircomListen();
+				} else {
+					e_sampling_off();
+					ircomData.fsm = IRCOM_FSM_IDLE;
+				}
+				return;
+			}			
+			break;
 		}
-    }
-
-    if (maxDiff < IRCOM_DETECTION_THRESHOLD_AMPLITUDE)
-		return -1;
-
-    return maxSensor;
-}
-
-int ircomReceiveDemodulate (int rawOutput)
-{
-    //int maxSensor = ircomReceiveData.receivingSensor;
-
-    // demodulate signal
-    //now we have the threshold and can normalize the signal if needed
-    static int rs[IRCOM_SAMPLING_WINDOW];
-    int i, u;
-    int min = 1024, max = 0;
-    long int tmp = 0;    
-    int mean;
-    int signalState;
-    int switchCount = 0;
-    
-    for (i = 0, u = 0; i < IRCOM_SAMPLING_WINDOW; i++, u += IRCOM_NB_IR_SENSORS){
-		rs[i] = ad_received[u];
-    }
-
-    // find max amplitude of signal
-    for (i = 0; i < IRCOM_SAMPLING_WINDOW; i++)
-    {
-		if (rs[i] < min){
-			min = rs[i];
-		}
-		else if (rs[i] > max){
-			max = rs[i];
-		}
-    }
-    if (max - min < IRCOM_DETECTION_THRESHOLD_AMPLITUDE)
-		return -1;
-
-    // compute mean signal
-    
-    for (i = 0; i < IRCOM_SAMPLING_WINDOW; i++){
-		tmp += rs[i];
-    }
-    mean = (int)(tmp / IRCOM_SAMPLING_WINDOW); // to much compute time
-    //mean = tmp >> IRCOM_SAMPLING_WINDOW_BIN_BITS; // divide by the number of bits that encode the sampling window (ie "/32" --> ">> 5)
-
-    // substract mean from signal
-    for (i = 0; i < IRCOM_SAMPLING_WINDOW; i++){
-		rs[i] -= mean;
-    }		
-
-    // start counting number of switch around mean signal
-    if (rs[0] > 0)
-		signalState = 1;
-    else
-		signalState = -1;
-
-    for (i = 1; i < IRCOM_SAMPLING_WINDOW; i++){
-		if(rs[i] > 0){
-			if (signalState < 0){
-				signalState = 1;
-				switchCount++;
-			}
-		}
-		else{
-			if (signalState > 0){
-				signalState = -1;
-				switchCount++;
-			}
-		}
-    }
-
-    if (rawOutput)
-		return switchCount;
-
-    if (switchCount >= IRCOM_MARK_THRESHOLD){
-		//ircomReceiveData.distance = max - min;
-		return IRCOM_MARK;
 	}
-    else if (switchCount >= IRCOM_SPACE_THRESHOLD)
-		return IRCOM_SPACE;
-    else
-		return -1;
 }
 
 int ircomReceiveCheckCRC()
@@ -400,264 +600,121 @@ int ircomReceiveCheckCRC()
     return ((crc + bitSum) & 0x003);
 }
 
-//void ircomReceiveListen()
-//{
-//	
-//    // process signal only when a full window is available
-//    if (e_ad_is_array_filled() == 0){
-//		return;
-//	}
-//	/********************************************************************************************************TEMP*/
-//    //Serial.print("RECEIVE LISTEN\n");
-//    int maxSensor = ircomReceiveGetMaxSensor();
-//    
-//    // no significant modulation perceived ?
-//    if (maxSensor < 0){
-////		Serial.print("NO MODULATION\n");
-//		return;
-//	}
-//	
-//    int switchCount = -1;
-//    //ircomReceiveData.receivingSensor = maxSensor;
-//    if (maxSensor >= 0)
-//		switchCount = ircomReceiveDemodulate(1);
+// **************************** //
 
-//    // no significant signal perceived ?
-//    if (switchCount < IRCOM_DETECTION_THRESHOLD_SWITCH){
-//		return;
-//    }
-//	
-//    // first thing, find out the shift of the signal
-//    int shift, u;
-//    int min = 1024;
-//    int max = 0;
-//    for (shift = 0, u = maxSensor; shift < IRCOM_SAMPLING_WINDOW; shift++, u += IRCOM_NB_IR_SENSORS){
-//		int s = ad_received[u];
-//		if (s > max)
-//			max = s;
-//		if (s < min)
-//			min = s;
-//		if (max - min >= IRCOM_DETECTION_THRESHOLD_AMPLITUDE)
-//			break;
-//    }
-//	//Serial.print("Shift: ");
-//	//Serial.println(shift);
-//    // skip samples, restart sampling the 3rd bit only (2nd is already on the way, not synced)
-//    e_ad_skip_samples(IRCOM_SAMPLING_WINDOW - e_last_ir_scan_id + shift);
+/**
+ * Set up the different ADC register to process the AD conversion
+ * by scanning the used AD channels. Each value of the channels will
+ * be stored in a different AD buffer register and an inturrupt will
+ * occure at the end of the scan.
+ *
+ * @param  void
+ * @return void
+ */
 
-//    // prevent ad from triggering prox sampling
-//    //ad_disable_proximity = 1;
+void e_init_sampling(void)
+{
+	array_filled = 0;
+	e_last_ir_scan_id = 0;
+	sampling_window = SAMPLING_WINDOW;
+    // continuous sampling
+    sampling = buffer1;
+    received = buffer2;
 
-//    // ok setup everything : start receiveing word, record all
-//    ircomReceiveData.currentBit = 0;
-//    //ircomReceiveData.receivingSensor = maxSensor;
-//    ircomReceiveData.done = 0;
-//    ircomReceiveData.error = 0;
-//    ircomReceiveData.receiving = 1;    
-//    ircomReceiveData.state = 1;
-//}
+    TCCR1A = 0 ;                    // Normal counting mode
+    TCCR1B = prescaleBits ;         // set prescale bits
+    TCCR1B |= _BV(ICES1);           // enable input capture for rising edge
+
+    bitSet(TIMSK1,ICIE1);           // enable input capture interrupt for timer 1
+	e_sampler_default_sampling_window();
+	randomSeed(millis());  			// change the starting sequence of random numbers.
+}
 
 
-//// FSM Receive, state 2
-//// receive a word
-//void ircomReceiveWord()
-//{
-//    // process signal only when a full window is available
-//    if (e_ad_is_array_filled() == 0){
-//		prova = 0;		
-////		if(prova){
-////			Serial.print("Array not filled\n");
-////		} 		
-//		return;
-//	}
 
-//    int signal = ircomReceiveDemodulate(0);
+void e_sampling_on(void)
+{
+    sampling_enable = 1;
+}
 
-//    // no significant signal perceived ?
-//    if (signal < 0){
-//		// stop receiveing, discard message
-//		ircomReceiveData.done = 1;
-//		ircomReceiveData.error = 1;
-//		ircomReceiveData.receiving = 0;    
-//		ircomReceiveData.state = 0;
+/*inline*/ void e_sampling_reset(void)
+{
+    
+	e_last_ir_scan_id = 0;      // reset array index
+    array_filled = 0;	        // reset array filled flag
+	TCCR1B |= _BV(ICES1);		// enable input capture for rising edge
+}
 
-//		// reenable prox in ad
-//		//ad_disable_proximity = 0;
+/*inline*/ void e_sampling_reset_with_samples(int new_sample_index)
+{
+    
+	e_last_ir_scan_id = new_sample_index;      // reset array index to 1 keeping the first long sample
+    array_filled = 0;	        // reset array filled flag
+}
 
-//		// set fsm in idle mode (except continuous listening mode...)
-//		if (ircomReceiveData.continuousListening == 1)
-//			ircomListen();
-//		else
-//			ircomData.fsm = IRCOM_FSM_IDLE;
+void e_sampling_off(void)
+{
+    sampling_enable = 0;
+}
 
-//		return;
-//    }
-//    ircomReceiveData.word[ircomReceiveData.currentBit++] = signal;
-//	
-//    // end of message ?
-//    if (ircomReceiveData.currentBit >= IRCOM_WORDSIZE + 2){
-//		
-//		// evaluate CRC
-//		ircomReceiveData.error = ircomReceiveCheckCRC();
+void e_ircom_interrupt()
+{
+		sampling[e_last_ir_scan_id] = temp;              // save the input capture value
+        e_last_ir_scan_id++;
 
-//		// stop receiving
-//		ircomReceiveData.done = 1;
-//		ircomReceiveData.receiving = 0;    
-//		ircomReceiveData.state = 0;
-//		//Set distance and direction
-//		//ircomReceiveData.distance = ircomEstimateDistance ( (int) ircomReceiveData.distance);
-//		//ircomReceiveData.direction = ircomEstimateDirection( ircomReceiveData.receivingSensor); 
+		if((sampling_window == SAMPLING_WINDOW && e_last_ir_scan_id >= SAMPLING_WINDOW) || (sampling_window == SAMPLING_WINDOW - 1 && e_last_ir_scan_id >= (SAMPLING_WINDOW - 1)) || (sampling_window == SAMPLING_WINDOW + 1 && e_last_ir_scan_id >= SAMPLING_WINDOW + 1)){
+	
+			e_last_ir_scan_id = 0;
+			array_filled = 1;
+			
+			// swap buffers
+			unsigned int* tmp = received;
+			received = sampling;
+			sampling = tmp;
+			
+			// Sampling window is full. Bit recognition
+			ircomReceiveMain();
+		}
+}
 
-//		// record in the msg queue
-//		long int value = ircomBin2Int(ircomReceiveData.word);
-//		ircomPushMessage(value, 
-//				 //ircomReceiveData.distance, 
-//				 //ircomReceiveData.direction, 
-//				 //ircomReceiveData.receivingSensor, 
-//				 ircomReceiveData.error);
+/* ICR interrupt vector */
+ISR(TIMER1_CAPT_vect)
+{
+  TCNT1 = 0;  // reset the counter
+  temp = ICR1;  // Save the value of duration
+  TCCR1B ^= _BV(ICES1);      // toggle bit to trigger on the other edge
+  nowReceive = millis();
+  //If we are in the random wait period
+  if(wait_fsm == RANDOM_WAIT && (randomWaitSince + randomInterval) < nowReceive){
+	//The random wait is over and we can now get back to sampling
+	wait_fsm = RUNNING;
+  }
+  if(sampling_enable && wait_fsm == RUNNING)
+  {
+	//We are not in the random wait and the sampling is enabled
+	e_ircom_interrupt();
+  }
+  
+}
 
-//		// reenable prox in ad
-//		//ad_disable_proximity = 0;
+void e_sampler_decrease_sampling_window (){
+	sampling_window = SAMPLING_WINDOW - 1;
+}
 
-//		// set fsm in idle mode (except continuous listening mode...)
-//		if (ircomReceiveData.continuousListening == 1)
-//			ircomListen();
-//		else
-//			ircomData.fsm = IRCOM_FSM_IDLE;
+void e_sampler_increase_sampling_window (){
+	sampling_window = SAMPLING_WINDOW + 1;
+}
 
-//		return;	
-//    }
-//}
+void e_sampler_default_sampling_window (){
+	sampling_window = SAMPLING_WINDOW;
+}
 
-//int ircomReceiveGetMaxSensor()
-//{
-//    //find the ir sensor with most interesting signal
-//    int i;
-
-//    int maxDiff = 0;
-//    int maxSensor = -1;
-
-//    for (i = 0; i < IRCOM_NB_IR_SENSORS; i++)
-//    {
-//		int index = i, j = 0, min = 1024, max = 0;
-//		for (j = 0; j < IRCOM_SAMPLING_WINDOW; j++)
-//		{
-//			int v = ad_received[index];
-//			if (v < min)
-//			{
-//				min = v;
-//			}
-//			else if (v > max)
-//			{
-//				max = v;
-//			}
-//			index += IRCOM_NB_IR_SENSORS;
-//		}
-//				
-//		if (max - min > maxDiff)
-//		{
-//			maxDiff = max - min;
-//			maxSensor = i;
-//		}
-//    }
-
-//    if (maxDiff < IRCOM_DETECTION_THRESHOLD_AMPLITUDE)
-//		return -1;
-
-//    return maxSensor;
-//}
-
-//int ircomReceiveDemodulate (int rawOutput)
-//{
-//    //int maxSensor = ircomReceiveData.receivingSensor;
-
-//    // demodulate signal
-//    //now we have the threshold and can normalize the signal if needed
-//    static int rs[IRCOM_SAMPLING_WINDOW];
-//    int i, u;
-//    for (i = 0, u = 0; i < IRCOM_SAMPLING_WINDOW; i++, u += IRCOM_NB_IR_SENSORS){
-//		rs[i] = ad_received[u];
-//    }
-
-//    // find max amplitude of signal
-//    int min = 1024, max = 0;
-//    for (i = 0; i < IRCOM_SAMPLING_WINDOW; i++)
-//    {
-//		if (rs[i] < min){
-//			min = rs[i];
-//		}
-//		else if (rs[i] > max){
-//			max = rs[i];
-//		}
-//    }
-//    if (max - min < IRCOM_DETECTION_THRESHOLD_AMPLITUDE)
-//		return -1;
-
-//    // compute mean signal
-//    long int tmp = 0;
-//    for (i = 0; i < IRCOM_SAMPLING_WINDOW; i++){
-//		tmp += rs[i];
-//    }
-//    int mean = (int)(tmp / IRCOM_SAMPLING_WINDOW);
-
-//    // substract mean from signal
-//    for (i = 0; i < IRCOM_SAMPLING_WINDOW; i++){
-//		rs[i] -= mean;
-//    }		
-
-//    // start counting number of switch around mean signal
-//    int signalState;
-//    if (rs[0] > 0)
-//		signalState = 1;
-//    else
-//		signalState = -1;
-//	
-//    int switchCount = 0;
-
-//    for (i = 1; i < IRCOM_SAMPLING_WINDOW; i++){
-//		if(rs[i] > 0){
-//			if (signalState < 0){
-//				signalState = 1;
-//				switchCount++;
-//			}
-//		}
-//		else{
-//			if (signalState > 0){
-//				signalState = -1;
-//				switchCount++;
-//			}
-//		}
-//    }
-
-//    if (rawOutput)
-//		return switchCount;
-
-//    if (switchCount >= IRCOM_MARK_THRESHOLD){
-//		//ircomReceiveData.distance = max - min;
-//		return IRCOM_MARK;
-//	}
-//    else if (switchCount >= IRCOM_SPACE_THRESHOLD)
-//		return IRCOM_SPACE;
-//    else
-//		return -1;
-//}
-
-//int ircomReceiveCheckCRC()
-//{
-//    // compute checksum
-//    int i;
-//    int bitSum = 0;
-//    for(i = 0; i < IRCOM_WORDSIZE; i++)
-//    {
-//	if (ircomReceiveData.word[i] == IRCOM_SPACE)
-//	    bitSum++;
-//    }
-//    int crc = ircomReceiveData.word[i] * 2 + ircomReceiveData.word[i + 1];
-
-//    // sum and get only the last 2 bits
-//    return ((crc + bitSum) & 0x003);
-//}
-
+/*inline*/ char e_sampler_is_array_filled(void)
+{
+    char result = array_filled;
+    array_filled = 0;
+    return result;
+}
 
 // IRCOM_RECEIVE_C
 #endif

@@ -31,9 +31,25 @@ void ircomStopListening ();
 void ircomReceiveMain();
 void ircomReceiveListen();
 void ircomReceiveWord();
-int ircomReceiveGetMaxSensor();
-int ircomReceiveDemodulate(int rawOutput);
 int ircomReceiveCheckCRC();
+void ircomResetReceive();
+
+void e_init_sampling(void);
+void e_sampling_on(void);
+/*inline*/ void e_sampling_reset(void);
+/*inline*/ void e_sampling_reset_with_samples(int new_sample_index);
+/*inline*/ void e_sampler_decrease_sampling_window (void);
+/*inline*/ void e_sampler_increase_sampling_window (void);
+/*inline*/ void e_sampler_default_sampling_window (void);
+void e_ircom_interrupt(void);
+void e_sampling_off(void);
+/*inline*/ char e_sampler_is_array_filled(void);
+
+extern unsigned int* sampling;
+extern unsigned int* received;
+
+#define SAMPLING_WINDOW 5
+#define NB_IR_SENSORS 1
 
 
 // IRCOM_RECEIVE_H

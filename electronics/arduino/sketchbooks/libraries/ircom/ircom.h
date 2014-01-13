@@ -20,26 +20,26 @@
 #ifndef IRCOM_H
 #define IRCOM_H
 
-#include "e_ad_conv.h"
+//#include "signal_sampler.h"
 //#include "math.h"
 
 
 // constants that define behaviour of ircom module
 #define IRCOM_WORDSIZE 8 // bits
-#define IRCOM_RECEIVESPEED 100.0 // microseconds
-#define IRCOM_MARK_SAMPLE_PER_PERIOD 3.0 
-#define IRCOM_SPACE_SAMPLE_PER_PERIOD 6.0 
-#define IRCOM_SAMPLING_WINDOW 24
+
+#define IRCOM_HALF_BIT_TOT_DURATION_MAX 1500 //microseconds
+#define IRCOM_HALF_LAST_BIT_TOT_DURATION_MAX 1100 //microseconds
+
+#define IRCOM_COMPLETE_BIT_TOT_DURATION_MAX 2500 //microseconds
+#define IRCOM_COMPLETE_LAST_BIT_TOT_DURATION_MAX 2000 //microseconds
+
+
+#define IRCOM_SAMPLING_WINDOW 5
+
 #define IRCOM_MARK 0
 #define IRCOM_SPACE 1
-#define IRCOM_MARK_THRESHOLD 8 // min number of signal switch
-#define IRCOM_SPACE_THRESHOLD 4 // min number of signal switch
 #define IRCOM_NB_IR_SENSORS 1
-#define IRCOM_DETECTION_THRESHOLD_AMPLITUDE 10 // min amplitude of signal -> this is limiting the communication range
-#define IRCOM_DETECTION_THRESHOLD_SWITCH 2 // min number of switch to initiate message
-#define IRCOM_PROX_TRIGGER 2460 // trigger proximity procedure every 81.3 usec * IRCOM_PROX_TRIGGER
 
-//static const int IRCOM_SAMPLING_WINDOW_BIN_BITS = log10(IRCOM_SAMPLING_WINDOW) / log10(2); // verify this in he code
 
 typedef char ircomWord[IRCOM_WORDSIZE + 4]; 
 
@@ -47,9 +47,6 @@ typedef char ircomWord[IRCOM_WORDSIZE + 4];
 typedef struct
 {
     long int value;
-//    float distance;
-//    float direction;
-//    int receivingSensor;
     int error; // -1 = inexistent msg, 0 = all is ok, 1 = error in transmission
 } IrcomMessage;
 
@@ -81,13 +78,12 @@ typedef struct
     int done;
     int error;
     ircomWord word;
-//    float distance;
-//    float direction;
+
 
     // private :
     int state;
     int currentBit;
-//    int receivingSensor;
+
 
     int continuousListening;
 } IrcomReceive;

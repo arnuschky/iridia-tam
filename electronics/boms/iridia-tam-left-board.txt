@@ -1,0 +1,7 @@
+Partlist exported from /home/abrutschy/shared_home/Projects/iridia-tam.git/electronics/eagle/projects/iridia-tam-v5/iridia-tam-left-board.sch at 20/08/2013 13:02
+
+Part       Value             Device            Package           Description                                                         
+IR_LED_L   SFH 4258          LEDP-LCC-4        P-LCC-4-1C-3A     LED                                                                 
+IR_TRANS_L SFH 320 FA        IR_TRANSP-LCC-2   P-LCC-2-TRANS     IR TRANSITOR                                                        
+LEFT       PORT_PAD_SMD_SIDE PORT_PAD_SMD_SIDE PORT_PAD_SMD_SIDE Connector pad for soldering side boards on side board of IRIDIA TAM 
+PROX_L     TCRT1000          TCRT1000_TH       TCRT1000_TH                                                                           

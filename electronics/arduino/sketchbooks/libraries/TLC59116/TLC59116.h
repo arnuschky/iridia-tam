@@ -26,8 +26,10 @@ class TLC59116 {
     /**
      * Sets up communication to a given TLC chip via I2C
      * @param address  7-bit I2C address of the TLC
+     * @param enable_high_speed  true if bus speed is 400kHz
+     * @param enable_internal_pullups true if internal pullups should be used
      */
-    void begin(uint8_t address);
+    void begin(uint8_t address_, bool enable_high_speed, bool enable_internal_pullups);
 
     /**
      * Shuts down I2C communication.

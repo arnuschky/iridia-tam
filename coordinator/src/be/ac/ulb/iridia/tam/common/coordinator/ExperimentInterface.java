@@ -28,6 +28,12 @@ public interface ExperimentInterface
     public void attachTAMController(TAM tam);
 
     /**
+     * Called by the coordinator on regular intervals.
+     * Can be used for management of TAMs etc.
+     */
+    public void step();
+
+    /**
      * Called by the coordinator after it shuts down the main loop.
      * Used to clean up, save files and, if required, shut down or switch off all TAMs.
      * @see Coordinator sendShutdownCommandToAllTAMs() and sendSwitchOffLedsCommandToAllTAMs()

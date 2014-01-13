@@ -67,9 +67,7 @@ find_path(ARDUINO_SDK_PATH
           HINTS ${SDK_PATH_HINTS}
           DOC "Arduino SDK path.")
 
-set(ARDUINO_SDK_PATH /opt/abrutschy/arduino-1.0.3/)
-#set(ARDUINO_SDK_PATH ../../arduino-sdk/)
-#set(ARDUINO_SDK_PATH ${CMAKE_SOURCE_DIR}/arduino-1.0.3/)
+set(ARDUINO_SDK_PATH /opt/arduino-1.0.3/)
 if(ARDUINO_SDK_PATH)
     list(APPEND CMAKE_SYSTEM_PREFIX_PATH ${ARDUINO_SDK_PATH}/hardware/tools/avr/bin)
     list(APPEND CMAKE_SYSTEM_PREFIX_PATH ${ARDUINO_SDK_PATH}/hardware/tools/avr/utils/bin)

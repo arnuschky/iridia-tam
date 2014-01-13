@@ -55,7 +55,7 @@ public class Coordinator
     public static final long SEND_QUEUE_INTERVAL =         10; // send all items in the queue every 10ms
     public static final long CHECK_DB_INTERVAL   =  60 * 1000; // check signal strength every minute
     public static final long TRIGGER_ND_INTERVAL = 600 * 1000; // trigger node discovery every 10 minutes
-    public static final long STEP_TAMS_INTERVAL  =         10; // step controller of all TAMs every 10ms
+    public static final long STEP_INTERVAL =               10; // step experiment and all TAMs every 10ms
 
     // packet types of TAM->Coordinator (TC)
     protected static final int PACKET_TYPE_TC_CURRENT_STATE = 0;
@@ -69,14 +69,16 @@ public class Coordinator
     protected static final int PACKET_TYPE_CT_SHUTDOWN = 13;
 
     // timeout for the SET_LEDS command in seconds
-    public static final long SET_LEDS_CMD_TIMEOUT = 1000;
-    // timeout for the SET_LEDS command in seconds
-    public static final long WRITE_ROBOT_CMD_TIMEOUT = 5000; //TODO set to a realistic value
+    public static final long SET_LEDS_CMD_TIMEOUT = 3;
+    // timeout for the WRITE_ROBOT_CMD_TIMEOUT command in seconds
+    public static final long WRITE_ROBOT_CMD_TIMEOUT = 5; //TODO set to a realistic value
 
     // list of known coordinator nodes, will be added to blacklist directly
     protected static final String COORDINATOR_ADDRESSES[] = {
-            "0x00,0x13,0xa2,0x00,0x40,0x8d,0x6e,0xb4",  // coordinator 1
-            "0x00,0x13,0xa2,0x00,0x40,0x8c,0x04,0xa4"   // coordinator 2
+            "0x00,0x13,0xa2,0x00,0x40,0x8c,0x04,0xa4",  // coordinator 0
+            "0x00,0x13,0xa2,0x00,0x40,0x8c,0x04,0xc5",  // coordinator 1
+            "0x00,0x13,0xa2,0x00,0x40,0x8d,0x6e,0xb4",  // coordinator 2
+            "0x00,0x13,0xa2,0x00,0x40,0x8d,0x6e,0xa2"   // coordinator 3
     };
 
     // main Xbee object used to communicate with the attached Xbee module
@@ -420,7 +422,7 @@ public class Coordinator
         // append request to the queue and schedule timer
         log.debug("Sending SET_LEDS command to " + tam.getId() + " value (" + ledColor + ")");
         sendRequestQueue.add(request);
-        getTimer().schedule(setLedsCmdTimeoutTask, SET_LEDS_CMD_TIMEOUT);
+        getTimer().schedule(setLedsCmdTimeoutTask, SET_LEDS_CMD_TIMEOUT * 1000);
     }
     
     /**
@@ -462,7 +464,7 @@ public class Coordinator
 
         // set the task in the TAM and schedule it
         tam.setWriteRobotCmdTimeoutTask(setWriteRobotTimeoutTask);
-        getTimer().schedule(setWriteRobotTimeoutTask, WRITE_ROBOT_CMD_TIMEOUT);
+        getTimer().schedule(setWriteRobotTimeoutTask, WRITE_ROBOT_CMD_TIMEOUT * 1000);
     }
 
     /**
@@ -605,12 +607,15 @@ public class Coordinator
             xbee.addPacketListener(new TAMResponsePacketListener(this));
 
             // schedule a task that steps all tam controllers at a regular interval
+            // it also steps the experiment
             final ConcurrentHashMap<String, TAM> myListOfTAMs = listOfTAMs;
             getTimer().scheduleAtFixedRate(new TimerTask()
             {
                 @Override
                 public void run()
                 {
+                    experiment.step();
+
                     if (isTamControllersEnabled())
                     {
                         for (TAM tam : myListOfTAMs.values())
@@ -620,7 +625,7 @@ public class Coordinator
                         }
                     }
                 }
-            }, 0, STEP_TAMS_INTERVAL);
+            }, 0, STEP_INTERVAL);
 
             // schedule a task that sends all requests that are currently in the queue
             getTimer().scheduleAtFixedRate(new TimerTask()

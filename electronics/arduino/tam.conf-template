@@ -1,5 +1,16 @@
 PORT="/dev/ttyUSB0"
 SPEED="57600"
-#SKETCH="iridia_tam_ircom"
-SKETCH="iridia_tam_v4_rB_xbee"
+
+# main firmware
+SKETCH="iridia_tam_firmware"
+
+# tests
+#SKETCH="test_barriers"
+#SKETCH="test_basics"
+#SKETCH="test_ircom"
+#SKETCH="test_leds"
+#SKETCH="test_production"
+#SKETCH="test_proximity"
+#SKETCH="test_voltage"
+#SKETCH="test_xbee"
 

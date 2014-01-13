@@ -8,7 +8,7 @@ package be.ac.ulb.iridia.tam.common.tam;
 public interface ControllerInterface
 {
     /**
-     * Step function of the controller. Called every Coordinator.STEP_TAMS_INTERVAL milliseconds.
+     * Step function of the controller. Called every Coordinator.STEP_INTERVAL milliseconds.
      */
     public void step();
 }

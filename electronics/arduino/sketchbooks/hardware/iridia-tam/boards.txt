@@ -1,0 +1,17 @@
+iridia_tam.name=IRIDIA TAM (ATmega1284p/3.3V/16MHz/Optiboot)
+#iridia_tam.upload.protocol=stk500v2
+iridia_tam.upload.protocol=arduino
+iridia_tam.upload.maximum_size=130048
+iridia_tam.upload.speed=115200
+iridia_tam.bootloader.low_fuses=0xff
+iridia_tam.bootloader.high_fuses=0xde
+iridia_tam.bootloader.extended_fuses=0xfd
+iridia_tam.bootloader.path=optiboot
+iridia_tam.bootloader.file=optiboot_atmega1284p.hex
+iridia_tam.bootloader.unlock_bits=0x3F
+iridia_tam.bootloader.lock_bits=0x0F
+iridia_tam.build.mcu=atmega1284p
+iridia_tam.build.f_cpu=16000000L
+#iridia_tam.build.core=arduino:arduino
+iridia_tam.build.core=standard
+iridia_tam.build.variant=standard
