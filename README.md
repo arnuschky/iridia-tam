@@ -7,7 +7,7 @@ Website: http://arnuschky.github.com/iridia-tam/
 GitHub: https://github.com/arnuschky/iridia-tam/
 Repository: http://arnuschky.github.com/iridia-tam/
 
-Current version of the TAM: version 4, revision C.
+Current version of the TAM: version 5, revision D.
 
 The GitHub repository contains all files required for producing and using the TAM. In detail, the different directories contain:
 
@@ -48,7 +48,6 @@ Sourcecode of the TAM's firmware ("sketchbook" in Arduino-speech). There are als
 Others are 3rd party open-source projects included for convenience:
 
  - I2C - fast I2C library by Wayne Truchsess (LGPL) http://dsscircuits.com/articles/arduino-i2c-master-library.html
- - LowPower - lightweight low power library by Rocket Scream Electronics (CC Attribution-ShareAlike 3.0 Unported License) http://www.rocketscream.com
 
 
 photos
