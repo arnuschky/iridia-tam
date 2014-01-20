@@ -1,4 +1,4 @@
-package be.ac.ulb.iridia.tam.user.controllers.iros2013;
+package be.ac.ulb.iridia.tam.user.controllers.proofofconcept;
 
 import be.ac.ulb.iridia.tam.common.coordinator.Coordinator;
 import be.ac.ulb.iridia.tam.common.tam.ControllerInterface;
@@ -29,14 +29,16 @@ public class Controller implements ControllerInterface
     public static final long DEAD_TIME_DURATION = 5 * 1000;
 
     // colors of the RGB leds used (0x19 max value to keep eyes safe)
-    public final static LedColor LED_C_AVAILABLE = new LedColor(0x00190000);  // green
-    public final static LedColor LED_S_AVAILABLE = new LedColor(0x00001900);  // blue
-    public final static LedColor LED_WORKING     = new LedColor(0x19000000);  // red
-    public final static LedColor LED_WAITING     = new LedColor(0x190e0000);  // orange
+    public final static LedColor LED_C_AVAILABLE = new LedColor(0x00110000);  // green
+    public final static LedColor LED_S_AVAILABLE = new LedColor(0x00001100);  // blue
+    public final static LedColor LED_WORKING     = new LedColor(0x11000000);  // red
+    public final static LedColor LED_WAITING     = new LedColor(0x11000700);  // pink
     public final static LedColor LED_NO_TASK     = new LedColor(0x00000000);  // off/black
 
     // coordinator
     private Coordinator coordinator;
+    // this instance number, only used for logging
+    private final int instance;
     // TAM this controller is attached to
     private TAM tamC1;
     private TAM tamC2;
@@ -52,7 +54,11 @@ public class Controller implements ControllerInterface
     private LedColor tamC2color;
     private LedColor tamScolor;
 
+    protected final int ROBOT_ID_BIT_HEADER = 0x80;
+    protected final int ROBOT_ID_BIT_MASK = 0x7F;
 
+    private final String UNKNOWN_ROBOT_ID = "unknown";
+    private HashMap<TAM, String> robotIds;
 
     // possible states of task, no others are possible
     public enum State
@@ -83,11 +89,12 @@ public class Controller implements ControllerInterface
      * @param coordinator  coordinator that handles the networking
      * @param tamC1        concurrent task 1
      * @param tamC2        concurrent task 2
-     * @param tamS        sequential task 1
+     * @param tamS         sequential task 1
      */
-    public Controller(Coordinator coordinator, final TAM tamC1, final TAM tamC2, final TAM tamS)
+    public Controller(Coordinator coordinator, final int instance, final TAM tamC1, final TAM tamC2, final TAM tamS)
     {
         this.coordinator = coordinator;
+        this.instance = instance;
         this.tamC1 = tamC1;
         this.tamC2 = tamC2;
         this.tamS = tamS;
@@ -101,6 +108,13 @@ public class Controller implements ControllerInterface
         tamC1color = LED_NO_TASK;
         tamC2color = LED_NO_TASK;
         tamScolor = LED_NO_TASK;
+
+        // map of tam -> robot ids
+        robotIds = new HashMap<TAM, String>();
+        robotIds.put(tamC1, UNKNOWN_ROBOT_ID);
+        robotIds.put(tamC2, UNKNOWN_ROBOT_ID);
+        robotIds.put(tamS, UNKNOWN_ROBOT_ID);
+
 
         // transition maps
         transitions = new HashMap<String, Transition>();
@@ -153,8 +167,8 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamC1.getId() + ": Announcing task");
-                log.info(tamC2.getId() + ": Announcing task");
+                log.info("i" + instance + "-" + tamC1.getId() + ": Announcing task");
+                log.info("i" + instance + "-" + tamC2.getId() + ": Announcing task");
                 tamC1color = LED_C_AVAILABLE;
                 tamC2color = LED_C_AVAILABLE;
             }
@@ -162,12 +176,14 @@ public class Controller implements ControllerInterface
 
         /*
          * State C_WAIT_ARRIVE
+         * Both TAMs are waiting for a robot.
          */
         // we make the transition to C1_WAIT_ARRIVE only if a robot is present in C2
         getTransition(State.C_WAIT_ARRIVE, State.C1_WAIT_ARRIVE).addCondition(new TransitionCondition()
         {
             public boolean evaluate(Transition transition)
             {
+                getRobotId(tamC2);
                 return tamC2.isRobotPresent();
             }
             public void reset(Transition transition) {}
@@ -176,7 +192,7 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamC2.getId() + ": Robot arrives and starts to wait for robot in " + tamC1.getId());
+                log.info("i" + instance + "-" + tamC2.getId() + ": Robot '" + robotIds.get(tamC2) + "' arrives and starts to wait for robot in " + tamC1.getId());
                 tamC2color = LED_WAITING;
             }
         });
@@ -185,6 +201,7 @@ public class Controller implements ControllerInterface
         {
             public boolean evaluate(Transition transition)
             {
+                getRobotId(tamC1);
                 return tamC1.isRobotPresent();
             }
             public void reset(Transition transition) {}
@@ -193,14 +210,12 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamC1.getId() + ": Robot arrives and starts to wait for robot in " + tamC2.getId());
+                log.info("i" + instance + "-" + tamC1.getId() + ": Robot '" + robotIds.get(tamC1) + "' arrives and starts to wait for robot in " + tamC2.getId());
                 tamC1color = LED_WAITING;
             }
         });
 
-        /*
-         * State CX_WAIT_ARRIVE
-         */
+        // Work timer used in CX_WAIT_ARRIVE, X=1|2
         TransitionAction setupWorkTimersActionC = new TransitionAction()
         {
             public void execute(Transition transition)
@@ -211,7 +226,7 @@ public class Controller implements ControllerInterface
                     @Override
                     public void run()
                     {
-                        log.info(tamC1.getId() + ": Task working time is over");
+                        log.info("i" + instance + "-" + tamC1.getId() + ": Task working time is over");
                         tamC1color = LED_WAITING;
                         taskDurationTimerC1 = null;
                     }
@@ -223,7 +238,7 @@ public class Controller implements ControllerInterface
                     @Override
                     public void run()
                     {
-                        log.info(tamC2.getId() + ": Task working time is over");
+                        log.info("i" + instance + "-" + tamC2.getId() + ": Task working time is over");
                         tamC2color = LED_WAITING;
                         taskDurationTimerC2 = null;
                     }
@@ -234,12 +249,14 @@ public class Controller implements ControllerInterface
 
         /*
          * State C1_WAIT_ARRIVE
+         * There's a robot in C2. C1 is still waiting for a robot.
          */
         // we make the transition to WORKING if the robot is still present
         getTransition(State.C1_WAIT_ARRIVE, State.C_WORKING).addCondition(new TransitionCondition()
         {
             public boolean evaluate(Transition transition)
             {
+                getRobotId(tamC2);
                 return tamC1.isRobotPresent();
             }
             public void reset(Transition transition) {}
@@ -248,10 +265,10 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamC1.getId() + ": Robot arrives, starts to work on subtask C1");
-                log.info(tamC2.getId() + ": Robot stops waiting, starts to work on subtask C2");
-                log.info(tamC1.getId() + ": Subtask C1 started");
-                log.info(tamC2.getId() + ": Subtask C2 started");
+                log.info("i" + instance + "-" + tamC1.getId() + ": Robot '" + robotIds.get(tamC1) + "' arrives, starts to work on subtask C1");
+                log.info("i" + instance + "-" + tamC2.getId() + ": Robot '" + robotIds.get(tamC2) + "' stops waiting, starts to work on subtask C2");
+                log.info("i" + instance + "-" + tamC1.getId() + ": Subtask C1 started by robot '" + robotIds.get(tamC1) + "'");
+                log.info("i" + instance + "-" + tamC2.getId() + ": Subtask C2 started by robot '" + robotIds.get(tamC2) + "'");
                 tamC1color = LED_WORKING;
                 tamC2color = LED_WORKING;
             }
@@ -270,21 +287,24 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamC2.getId() + ": Robot aborted task during waiting for partner");
+                log.info("i" + instance + "-" + tamC2.getId() + ": Robot '" + robotIds.get(tamC2) + "' aborted task during waiting for subtask C1");
                 tamC1color = LED_NO_TASK;
                 tamC2color = LED_NO_TASK;
                 tamScolor = LED_NO_TASK;
+                resetRobotId(tamC2);
             }
         });
 
         /*
          * State C2_WAIT_ARRIVE
+         * There's a robot in C1. C2 is still waiting for a robot.
          */
         // we make the transition to WORKING if the robot is still present
         getTransition(State.C2_WAIT_ARRIVE, State.C_WORKING).addCondition(new TransitionCondition()
         {
             public boolean evaluate(Transition transition)
             {
+                getRobotId(tamC1);
                 return tamC2.isRobotPresent();
             }
             public void reset(Transition transition) {}
@@ -293,10 +313,10 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamC2.getId() + ": Robot arrives, starts to work on subtask C1");
-                log.info(tamC1.getId() + ": Robot stops waiting, starts to work on subtask C2");
-                log.info(tamC1.getId() + ": Subtask C1 started");
-                log.info(tamC2.getId() + ": Subtask C2 started");
+                log.info("i" + instance + "-" + tamC1.getId() + ": Robot '" + robotIds.get(tamC1) + "' stops waiting, starts to work on subtask C1");
+                log.info("i" + instance + "-" + tamC2.getId() + ": Robot '" + robotIds.get(tamC2) + "' arrives, starts to work on subtask C2");
+                log.info("i" + instance + "-" + tamC1.getId() + ": Subtask C1 started by robot '" + robotIds.get(tamC1) + "'");
+                log.info("i" + instance + "-" + tamC2.getId() + ": Subtask C2 started by robot '" + robotIds.get(tamC2) + "'");
                 tamC1color = LED_WORKING;
                 tamC2color = LED_WORKING;
             }
@@ -315,10 +335,11 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamC1.getId() + ": Robot aborted task during waiting for partner");
+                log.info("i" + instance + "-" + tamC1.getId() + ": Robot '" + robotIds.get(tamC1) + "' aborted task during waiting for subtask C2");
                 tamC1color = LED_NO_TASK;
                 tamC2color = LED_NO_TASK;
                 tamScolor = LED_NO_TASK;
+                resetRobotId(tamC1);
             }
         });
 
@@ -330,6 +351,9 @@ public class Controller implements ControllerInterface
         {
             public boolean evaluate(Transition transition)
             {
+                getRobotId(tamC1);
+                getRobotId(tamC2);
+                getRobotId(tamS);
                 return tamC1.isRobotPresent() && taskDurationTimerC1 == null && tamC2.isRobotPresent() && taskDurationTimerC2 == null;
             }
             public void reset(Transition transition) {}
@@ -338,9 +362,9 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamC1.getId() + ": Subtask C1 done");
-                log.info(tamC2.getId() + ": Subtask C2 Done");
-                log.info(tamS.getId() + ": Available, waiting for robot to arrive.");
+                log.info("i" + instance + "-" + tamC1.getId() + ": Subtask C1 done by robot '" + robotIds.get(tamC1) + "'");
+                log.info("i" + instance + "-" + tamC2.getId() + ": Subtask C2 done by robot '" + robotIds.get(tamC2) + "'");
+                log.info("i" + instance + "-" + tamS.getId() + ": Available, waiting for robot to arrive.");
 
                 tamC1color = LED_WAITING;
                 tamC2color = LED_WAITING;
@@ -361,9 +385,9 @@ public class Controller implements ControllerInterface
             public void execute(Transition transition)
             {
                 if (!tamC1.isRobotPresent())
-                    log.info(tamC1.getId() + ": Robot aborted subtask C1 during working");
+                    log.info("i" + instance + "-" + tamC1.getId() + ": Robot '" + robotIds.get(tamC1) + "' aborted subtask C1 during working");
                 if (!tamC2.isRobotPresent())
-                    log.info(tamC2.getId() + ": Robot aborted subtask C2 during working");
+                    log.info("i" + instance + "-" + tamC2.getId() + ": Robot '" + robotIds.get(tamC2) + "' aborted subtask C2 during working");
                 if (taskDurationTimerC1 != null)
                 {
                     taskDurationTimerC1.cancel();
@@ -388,6 +412,9 @@ public class Controller implements ControllerInterface
         {
             public boolean evaluate(Transition transition)
             {
+                getRobotId(tamS);
+                getRobotId(tamC1);
+                getRobotId(tamC2);
                 return tamS.isRobotPresent();
             }
             public void reset(Transition transition) {}
@@ -396,9 +423,10 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamC1.getId() + ": Robot has to leave");
-                log.info(tamC2.getId() + ": Robot has to leave");
-                log.info(tamS.getId() + ": Waiting for other robots to leave");
+                log.info("i" + instance + "-" + tamS.getId() + ": Robot '" + robotIds.get(tamS) + "' arrived in subtask S");
+                log.info("i" + instance + "-" + tamC1.getId() + ": Robot '" + robotIds.get(tamC1) + "' has to leave");
+                log.info("i" + instance + "-" + tamC2.getId() + ": Robot '" + robotIds.get(tamC2) + "' has to leave");
+                log.info("i" + instance + "-" + tamS.getId() + ": Waiting for other robots to leave");
 
                 tamC1color = LED_NO_TASK;
                 tamC2color = LED_NO_TASK;
@@ -419,12 +447,15 @@ public class Controller implements ControllerInterface
             public void execute(Transition transition)
             {
                 if (!tamC1.isRobotPresent())
-                    log.info(tamC1.getId() + ": Robot aborted subtask C1 during waiting for sequential task");
+                    log.info("i" + instance + "-" + tamC1.getId() + ": Robot aborted subtask C1 during waiting for sequential task");
                 if (!tamC2.isRobotPresent())
-                    log.info(tamC2.getId() + ": Robot aborted subtask C2 during waiting for sequential task");
+                    log.info("i" + instance + "-" + tamC2.getId() + ": Robot aborted subtask C2 during waiting for sequential task");
                 tamC1color = LED_NO_TASK;
                 tamC2color = LED_NO_TASK;
                 tamScolor = LED_NO_TASK;
+
+                resetRobotId(tamC1);
+                resetRobotId(tamC2);
             }
         });
 
@@ -436,6 +467,7 @@ public class Controller implements ControllerInterface
         {
             public boolean evaluate(Transition transition)
             {
+                getRobotId(tamS);
                 return !tamC1.isRobotPresent() && !tamC2.isRobotPresent();
             }
             public void reset(Transition transition) {}
@@ -444,9 +476,9 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamC1.getId() + ": Robot left");
-                log.info(tamC2.getId() + ": Robot left");
-                log.info(tamS.getId() + ": Subtask S started");
+                log.info("i" + instance + "-" + tamC1.getId() + ": Robot left");
+                log.info("i" + instance + "-" + tamC2.getId() + ": Robot left");
+                log.info("i" + instance + "-" + tamS.getId() + ": Subtask S started by robot '" + robotIds.get(tamS) + "'");
 
                 tamScolor = LED_WORKING;
 
@@ -456,11 +488,15 @@ public class Controller implements ControllerInterface
                     @Override
                     public void run()
                     {
-                        log.info(tamS.getId() + ": Subtask S working time is over");
+                        log.info("i" + instance + "-" + tamS.getId() + ": Subtask S working time is over");
                         taskDurationTimerS = null;
                     }
                 };
+
                 getCoordinator().getTimer().schedule(taskDurationTimerS, WORKING_DURATION);
+
+                resetRobotId(tamC1);
+                resetRobotId(tamC2);
             }
         });
         // we make the transition to FAIL if sequential robot left
@@ -476,10 +512,14 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamS.getId() + ": Robot aborted subtask S during waiting");
+                log.info("i" + instance + "-" + tamS.getId() + ": Robot '" + robotIds.get(tamS) + "' aborted subtask S during waiting");
                 tamC1color = LED_NO_TASK;
                 tamC2color = LED_NO_TASK;
                 tamScolor = LED_NO_TASK;
+
+                resetRobotId(tamS);
+                resetRobotId(tamC1);
+                resetRobotId(tamC2);
             }
         });
 
@@ -491,6 +531,7 @@ public class Controller implements ControllerInterface
         {
             public boolean evaluate(Transition transition)
             {
+                getRobotId(tamS);
                 return tamS.isRobotPresent() && taskDurationTimerS == null;
             }
             public void reset(Transition transition) {}
@@ -499,8 +540,8 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamS.getId() + ": Subtask S done");
-                log.info(tamS.getId() + ": Robot has to leave");
+                log.info("i" + instance + "-" + tamS.getId() + ": Subtask S done");
+                log.info("i" + instance + "-" + tamS.getId() + ": Robot '" + robotIds.get(tamS) + "' has to leave");
                 tamScolor = LED_NO_TASK;
             }
         });
@@ -517,7 +558,7 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamS.getId() + ": Robot aborted subtask S during working");
+                log.info("i" + instance + "-" + tamS.getId() + ": Robot '" + robotIds.get(tamS) + "' aborted subtask S during working");
                 if (taskDurationTimerS != null)
                 {
                     taskDurationTimerS.cancel();
@@ -526,6 +567,10 @@ public class Controller implements ControllerInterface
                 tamC1color = LED_NO_TASK;
                 tamC2color = LED_NO_TASK;
                 tamScolor = LED_NO_TASK;
+
+                resetRobotId(tamS);
+                resetRobotId(tamC1);
+                resetRobotId(tamC2);
             }
         });
 
@@ -545,7 +590,10 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info(tamS.getId() + ": Robot left");
+                log.info("i" + instance + "-" + tamS.getId() + ": Robot '" + robotIds.get(tamS) + "' left");
+                resetRobotId(tamS);
+                resetRobotId(tamC1);
+                resetRobotId(tamC2);
             }
         });
 
@@ -565,14 +613,14 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info("Task SUCCEEDED!");
+                log.info("i" + instance + ": Task SUCCEEDED!");
 
                 deadTimeTimer = new TimerTask()
                 {
                     @Override
                     public void run()
                     {
-                        log.info("Dead time is over");
+                        log.info("i" + instance + ": Dead time is over");
                         deadTimeTimer = null;
                     }
                 };
@@ -581,6 +629,10 @@ public class Controller implements ControllerInterface
                 tamC1color = LED_NO_TASK;
                 tamC2color = LED_NO_TASK;
                 tamScolor = LED_NO_TASK;
+
+                resetRobotId(tamS);
+                resetRobotId(tamC1);
+                resetRobotId(tamC2);
             }
         });
 
@@ -600,14 +652,18 @@ public class Controller implements ControllerInterface
         {
             public void execute(Transition transition)
             {
-                log.info("Task FAILED!");
+                log.info("i" + instance + ": Task FAILED!");
                 tamC1color = LED_NO_TASK;
                 tamC2color = LED_NO_TASK;
                 tamScolor = LED_NO_TASK;
+
+                resetRobotId(tamS);
+                resetRobotId(tamC1);
+                resetRobotId(tamC2);
             }
         });
 
-        log.info("New TAM controller, starting in state "+ getState());
+        log.info("i" + instance + ": New TAM 3-task controller ("+tamC1.getId()+","+tamC2.getId()+","+tamS.getId()+"), starting in state "+ getState());
     }
 
     private void setLeds(TAM tam, LedColor color)
@@ -618,6 +674,38 @@ public class Controller implements ControllerInterface
         }
     }
 
+    /**
+     * Instructs the TAM to communicate with a robot in order to get its id.
+     * @param tam  TAM whose robot id to read
+     */
+    public void getRobotId(TAM tam)
+    {
+//        log.debug(tam.getId() + ": Trying to receive robot ID");
+//        log.debug(tam.getId() + ": Robot data: " + tam.getRobotData());
+        if (tam.isRobotPresent() && (tam.getRobotData() & ROBOT_ID_BIT_HEADER) == ROBOT_ID_BIT_HEADER) {
+            int robotId = tam.getRobotData() & ROBOT_ID_BIT_MASK;
+            // sanity check
+            if (robotId > 20 && robotId < 70) {
+                String robotIdStr = "epuck" + robotId;
+                if (!robotIds.get(tam).equals(robotIdStr))
+                    log.info("i" + instance + "-" + tam.getId() + ": New ID from robot: " + robotIdStr);
+                robotIds.put(tam, "epuck" + robotId);
+            }
+        }
+    }
+
+    /**
+     * Resets the robot id associated with a TAM.
+     * @param tam  TAM whose robot id to reset
+     */
+    public void resetRobotId(TAM tam)
+    {
+        if (!robotIds.get(tam).equals(UNKNOWN_ROBOT_ID))
+        {
+//            log.info("i" + instance + "-" + tam.getId() + ": Resetting robot ID");
+            robotIds.put(tam, UNKNOWN_ROBOT_ID);
+        }
+    }
 
     /**
      * Step function of the controller. Called every Coordinator.STEP_INTERVAL milliseconds.
@@ -744,7 +832,7 @@ public class Controller implements ControllerInterface
     {
         if (newState != state)
         {
-            log.debug(this + " state changed from " + state + " to " + newState);
+//            log.debug(this + " state changed from " + state + " to " + newState);
             state = newState;
         }
     }

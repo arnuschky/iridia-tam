@@ -3,11 +3,15 @@ package be.ac.ulb.iridia.tam.user.experiments;
 import be.ac.ulb.iridia.tam.common.coordinator.Coordinator;
 import be.ac.ulb.iridia.tam.common.coordinator.ExperimentInterface;
 import be.ac.ulb.iridia.tam.common.tam.TAM;
-import be.ac.ulb.iridia.tam.user.controllers.iros2013.Controller;
+import be.ac.ulb.iridia.tam.user.controllers.proofofconcept.Controller;
 import com.rapplogic.xbee.api.XBeeException;
 import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 
 
@@ -17,16 +21,18 @@ import java.util.HashMap;
  * The controller sets a random task when the TAM is free.
  * @see be.ac.ulb.iridia.tam.user.controllers.TwoRandomTasksController
  */
-public class IROS2013Experiment implements ExperimentInterface
+public class ProofOfConceptExperiment implements ExperimentInterface
 {
-    private final static Logger log = Logger.getLogger(IROS2013Experiment.class);
+    private final static Logger log = Logger.getLogger(ProofOfConceptExperiment.class);
 
     private final static long EXPERIMENT_DURATION_IN_SECONDS = 3600;
+
+    private final static long NUMBER_OF_TASK_INSTANCES = 6;
 
     // coordinator that handles all the network stuff
     private Coordinator coordinator;
 
-    private HashMap<String, TAM> listOfDiscoveredTams;
+    private ArrayList<TAM> listOfDiscoveredTams;
 
 
 
@@ -34,13 +40,31 @@ public class IROS2013Experiment implements ExperimentInterface
      * Create experiment.
      * @param coordinator  coordinator object
      */
-    public IROS2013Experiment(Coordinator coordinator)
+    public ProofOfConceptExperiment(Coordinator coordinator)
     {
         this.coordinator = coordinator;
-        this.listOfDiscoveredTams = new HashMap<String, TAM>();
+        this.listOfDiscoveredTams = new ArrayList<TAM>();
 
         // disables the controllers of all TAM until we discovered all required TAMs on the network
         coordinator.setTamControllersEnabled(false);
+    }
+
+    /**
+     * Called by the coordinator on regular intervals.
+     * Can be used for management of TAMs etc.
+     */
+    public void step()
+    {
+    }
+
+
+    public class CustomComparator implements Comparator<TAM>
+    {
+        @Override
+        public int compare(TAM tam1, TAM tam2) {
+            return tam1.getId().compareTo(tam2.getId());
+        }
+
     }
 
     /**
@@ -54,30 +78,43 @@ public class IROS2013Experiment implements ExperimentInterface
         if (coordinator.isTamControllersEnabled() && listOfDiscoveredTams.size() == 3)
             return;
 
-        // we ignore TAMs that do not belong to our experiment
-        if (!tam.getId().equals("TAM01") && !tam.getId().equals("TAM02") && !tam.getId().equals("TAM04"))
-            return;
-
         // create new standard stand-alone controller for a tam
-        listOfDiscoveredTams.put(tam.getId(), tam);
-        log.info("Discovered a new "+tam.getId()+", total number is " + listOfDiscoveredTams.size());
+        listOfDiscoveredTams.add(tam);
+        log.info("Discovered a new "+tam.getId()+", total number is " + listOfDiscoveredTams.size() +
+                " of " + (NUMBER_OF_TASK_INSTANCES * 3) + " required.");
 
-        if (listOfDiscoveredTams.size() == 3)
+        if (listOfDiscoveredTams.size() == NUMBER_OF_TASK_INSTANCES * 3)
         {
-            // create a new centralized controller for all involved TAMs
-            Controller controller = new Controller(coordinator,
-                    listOfDiscoveredTams.get("TAM01"),
-                    listOfDiscoveredTams.get("TAM02"),
-                    listOfDiscoveredTams.get("TAM04"));
+            // sort the list of discovered TAMs by ID
+            Collections.sort(listOfDiscoveredTams, new CustomComparator());
 
-            // set controller only on a single tam so it gets executed only once
-            listOfDiscoveredTams.get("TAM01").setController(controller);
+            // now, build a task instance by using the unused TAMs with the lowest IDs, in order
+            for (int i = 0; i < NUMBER_OF_TASK_INSTANCES; i++) {
+                log.info("Building instance " + (i + 1));
 
-            log.info("=======================================");
-            log.info(" Completed setup, starting experiment! ");
-            log.info("=======================================");
+                // create a new centralized controller for all involved TAMs
+                Controller controller = new Controller(coordinator,
+                        i,
+                        listOfDiscoveredTams.get(i * 3),
+                        listOfDiscoveredTams.get(i * 3 + 1),
+                        listOfDiscoveredTams.get(i * 3 + 2));
 
-            coordinator.setTamControllersEnabled(true);
+                // set controller only on a single tam so it gets executed only once
+                // TODO: this is a bit of a hack
+                listOfDiscoveredTams.get(i * 3).setController(controller);
+            }
+            log.info("===================================================");
+            log.info(" Completed setup, press enter to start experiment! ");
+            log.info("===================================================");
+            try {
+                System.in.read();
+                log.info("Starting experiment! ");
+
+                coordinator.setTamControllersEnabled(true);
+            }
+            catch (IOException e)
+            {
+            }
         }
     }
 
@@ -109,11 +146,11 @@ public class IROS2013Experiment implements ExperimentInterface
         Coordinator coordinator = new Coordinator("/dev/ttyUSB1", 9600);
 
         // create our experiment (see above)
-        ExperimentInterface experiment = new IROS2013Experiment(coordinator);
+        ExperimentInterface experiment = new ProofOfConceptExperiment(coordinator);
         coordinator.setExperiment(experiment);
 
         // request shutdown after EXPERIMENT_DURATION_IN_SECONDS seconds
-        coordinator.scheduleShutdown(IROS2013Experiment.EXPERIMENT_DURATION_IN_SECONDS);
+        coordinator.scheduleShutdown(ProofOfConceptExperiment.EXPERIMENT_DURATION_IN_SECONDS);
         coordinator.setupShutdownHandlers();
 
         // run the coordinator send and receive threads that handle all Xbee communication

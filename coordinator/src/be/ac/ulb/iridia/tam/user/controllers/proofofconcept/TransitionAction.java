@@ -1,4 +1,4 @@
-package be.ac.ulb.iridia.tam.user.controllers.iros2013;
+package be.ac.ulb.iridia.tam.user.controllers.proofofconcept;
 
 
 /**

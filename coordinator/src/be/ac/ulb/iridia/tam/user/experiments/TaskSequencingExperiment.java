@@ -3,35 +3,26 @@ package be.ac.ulb.iridia.tam.user.experiments;
 import be.ac.ulb.iridia.tam.common.coordinator.Coordinator;
 import be.ac.ulb.iridia.tam.common.coordinator.ExperimentInterface;
 import be.ac.ulb.iridia.tam.common.tam.TAM;
-import be.ac.ulb.iridia.tam.common.tasks.SequentialTask;
-import be.ac.ulb.iridia.tam.user.controllers.AbstractTaskController;
+import be.ac.ulb.iridia.tam.user.controllers.TaskSequencingController;
 import com.rapplogic.xbee.api.XBeeException;
 import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
 
-import java.util.TimerTask;
-
-/**
- * This example experiment is a two-task random task-type experiment. Each TAM can
- * represent one of two tasks, BLUE or GREEN, each running with a different duration.
- * The controller sets a random task when the TAM is free.
- * @see be.ac.ulb.iridia.tam.user.controllers.TwoRandomTasksController
- */
-public class IndividualTaskExperiment implements ExperimentInterface
+public class TaskSequencingExperiment implements ExperimentInterface
 {
-    private final static Logger log = Logger.getLogger(IndividualTaskExperiment.class);
+    private final static Logger log = Logger.getLogger(TaskSequencingExperiment.class);
 
-    private final static long EXPERIMENT_DURATION_IN_SECONDS = 3600;
+    private final static long EXPERIMENT_DURATION_IN_SECONDS = 360000;
 
     // coordinator that handles all the network stuff
-    private Coordinator coordinator;
+    Coordinator coordinator;
 
 
     /**
      * Create experiment.
      * @param coordinator  coordinator object
      */
-    public IndividualTaskExperiment(Coordinator coordinator)
+    public TaskSequencingExperiment(Coordinator coordinator)
     {
         this.coordinator = coordinator;
     }
@@ -44,29 +35,36 @@ public class IndividualTaskExperiment implements ExperimentInterface
     {
     }
 
-    /**
-     * Called by the coordinator to attach controllers to newly discovered TAMs.
-     * You can use the id or address of the TAM to attach specific controllers
-     * to specific TAMs, thereby giving them the different functionality.
-     * @param tam  TAM the coordinator requests a controller for
-     */
     public void attachTAMController(TAM tam)
     {
         // create new controller for a tam
-        log.fatal("Creating new AbstractTaskController for " + tam.getId());
-        tam.setController(new AbstractTaskController(coordinator, tam));
+        log.info("Creating new Controller for " + tam.getId());
+        if(tam.getId().equals("TAM04")){
+        	tam.setController(new TaskSequencingController(coordinator, tam, 1));
+        	log.info("Controller for TAM04 created");
+        } else if(tam.getId().equals("TAM05")){
+        	tam.setController(new TaskSequencingController(coordinator, tam, 2));
+        	log.info("Controller for TAM05 created");
+        } else if(tam.getId().equals("TAM06")){
+        	tam.setController(new TaskSequencingController(coordinator, tam, 3));
+        	log.info("Controller for TAM06 created");
+        } 
+//        else if(tam.getId().equals("TAM04")){
+//        	tam.setController(new TaskSequencingController(coordinator, tam, 3));
+//        	log.info("Controller for TAM04 created");
+//        }
+
     }
 
     /**
      * Called by the coordinator after it shuts down the main loop.
      * Used to clean up, save files and, if required, shut down or switch off all TAMs.
-     * @see be.ac.ulb.iridia.tam.common.coordinator.Coordinator sendShutdownCommandToAllTAMs() and sendSwitchOffLedsCommandToAllTAMs()
-     * @throws com.rapplogic.xbee.api.XBeeException
+     * @see Coordinator sendShutdownCommandToAllTAMs() and sendSwitchOffLedsCommandToAllTAMs()
+     * @throws XBeeException
      */
     public void shutdownAction() throws XBeeException
     {
         log.fatal("Shutting down all TAMs...");
-        //coordinator.sendShutdownCommandToAllTAMs();
         coordinator.sendSwitchOffLedsCommandToAllTAMs();
         log.fatal("Bye bye.");
     }
@@ -82,14 +80,14 @@ public class IndividualTaskExperiment implements ExperimentInterface
         PropertyConfigurator.configure("log4j.properties");
 
         // create the coordinator
-        Coordinator coordinator = new Coordinator("/dev/ttyUSB1", 9600);
+        Coordinator coordinator = new Coordinator("/dev/ttyUSB0", 9600);
 
         // create our experiment (see above)
-        ExperimentInterface experiment = new IndividualTaskExperiment(coordinator);
+        ExperimentInterface experiment = new TaskSequencingExperiment(coordinator);
         coordinator.setExperiment(experiment);
 
         // request shutdown after EXPERIMENT_DURATION_IN_SECONDS seconds
-        coordinator.scheduleShutdown(IndividualTaskExperiment.EXPERIMENT_DURATION_IN_SECONDS);
+        coordinator.scheduleShutdown(TaskSequencingExperiment.EXPERIMENT_DURATION_IN_SECONDS);
 
         // run the coordinator send and receive threads that handle all Xbee communication
         // NOTE: this will never return, so must be last!

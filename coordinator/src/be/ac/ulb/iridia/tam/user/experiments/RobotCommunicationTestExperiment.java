@@ -36,6 +36,14 @@ public class RobotCommunicationTestExperiment implements ExperimentInterface
     }
 
     /**
+     * Called by the coordinator on regular intervals.
+     * Can be used for management of TAMs etc.
+     */
+    public void step()
+    {
+    }
+
+    /**
      * Called by the coordinator to attach controllers to newly discovered TAMs.
      * You can use the id or address of the TAM to attach specific controllers
      * to specific TAMs, thereby giving them the different functionality.
