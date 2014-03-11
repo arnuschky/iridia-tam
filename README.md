@@ -54,5 +54,5 @@ Others are 3rd party open-source projects included for convenience:
 photos
 ------
 
-High-res photos of the TAM version 4. (*Final version tbd*)
+High-res photos of the TAM version 5, revision D.
 
