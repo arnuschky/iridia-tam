@@ -4,7 +4,7 @@ import be.ac.ulb.iridia.tam.common.AbstractExperiment;
 import be.ac.ulb.iridia.tam.coordinator.Coordinator;
 import be.ac.ulb.iridia.tam.common.ExperimentInterface;
 import be.ac.ulb.iridia.tam.common.TAMInterface;
-import be.ac.ulb.iridia.tam.user.controllers.CameraCalibrationController;
+import be.ac.ulb.iridia.tam.user.controllers.RandomTaskController;
 import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
 
@@ -12,15 +12,16 @@ import java.util.TimerTask;
 
 
 /**
- * This is a test experiment to calibrate the camera of the epuck robots.
- * The controller simply keeps the LEDs of the TAM on with a red color.
- * @see CameraCalibrationController
+ * This example experiment is a two task-type experiment. Each TAM can
+ * represent one of two tasks, BLUE or GREEN, each running with a different duration.
+ * The controller sets a random task when the TAM is free.
+ * @see be.ac.ulb.iridia.tam.user.controllers.RandomTaskController
  */
-public class CameraCalibrationExperiment extends AbstractExperiment
+public class RandomTaskExperiment extends AbstractExperiment
 {
-    private final static Logger log = Logger.getLogger(CameraCalibrationExperiment.class);
+    private final static Logger log = Logger.getLogger(RandomTaskExperiment.class);
 
-    private final static long EXPERIMENT_DURATION_IN_SECONDS = 600000000;
+    private final static long EXPERIMENT_DURATION_IN_SECONDS = 3600;
 
 
     /**
@@ -54,8 +55,8 @@ public class CameraCalibrationExperiment extends AbstractExperiment
     public void attachTAMController(TAMInterface tam)
     {
         // create new controller for a tam
-        log.info("Creating new CameraCalibrationController for " + tam.getId());
-        CameraCalibrationController controller = new CameraCalibrationController();
+        log.info("Creating new RandomTaskController for " + tam.getId());
+        RandomTaskController controller = new RandomTaskController();
         controller.init(getPrng().nextInt(), tam);
         tam.setController(controller);
     }
@@ -71,10 +72,10 @@ public class CameraCalibrationExperiment extends AbstractExperiment
         PropertyConfigurator.configure("log4j.properties");
 
         // create the coordinator
-        Coordinator coordinator = new Coordinator("/dev/ttyUSB0", 9600);
+        Coordinator coordinator = new Coordinator("/dev/ttyUSB1", 9600);
 
         // create our experiment (see above)
-        ExperimentInterface experiment = new CameraCalibrationExperiment();
+        ExperimentInterface experiment = new RandomTaskExperiment();
         experiment.init(System.currentTimeMillis());
         coordinator.setExperiment(experiment);
 

@@ -1,7 +1,6 @@
-package be.ac.ulb.iridia.tam.common.coordinator;
+package be.ac.ulb.iridia.tam.coordinator;
 
-import be.ac.ulb.iridia.tam.common.tam.LedColor;
-import be.ac.ulb.iridia.tam.common.tam.TAM;
+import be.ac.ulb.iridia.tam.common.LedColor;
 import com.rapplogic.xbee.api.ApiId;
 import com.rapplogic.xbee.api.PacketListener;
 import com.rapplogic.xbee.api.XBeeResponse;
@@ -76,7 +75,7 @@ class TAMResponsePacketListener implements PacketListener
                 tam.updateLedColor(new LedColor((byte) data[1], (byte) data[2], (byte) data[3]));
                 tam.updateRobotPresent(data[4] == 1);
                 tam.updateRobotData(data[7]);
-                tam.setVoltage(data[5], data[6]);
+                tam.updateVoltage(data[5], data[6]);
                 tam.updateLastSeenTimestamp();
                 log.debug("TAM status updated: " + tam);
 

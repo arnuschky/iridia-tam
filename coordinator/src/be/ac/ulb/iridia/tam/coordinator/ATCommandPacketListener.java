@@ -1,4 +1,4 @@
-package be.ac.ulb.iridia.tam.common.coordinator;
+package be.ac.ulb.iridia.tam.coordinator;
 
 import com.rapplogic.xbee.api.ApiId;
 import com.rapplogic.xbee.api.AtCommandResponse;
@@ -6,6 +6,7 @@ import com.rapplogic.xbee.api.PacketListener;
 import com.rapplogic.xbee.api.XBeeResponse;
 import com.rapplogic.xbee.api.digimesh.DMNodeDiscover;
 import org.apache.log4j.Logger;
+
 
 /**
  * This class is a packet listener used by the coordinator to parse

@@ -1,9 +1,13 @@
-package be.ac.ulb.iridia.tam.common.tam;
+package be.ac.ulb.iridia.tam.coordinator;
 
+import be.ac.ulb.iridia.tam.common.LedColor;
+import be.ac.ulb.iridia.tam.common.TAMInterface;
+import be.ac.ulb.iridia.tam.common.ControllerInterface;
 import com.rapplogic.xbee.api.XBeeAddress64;
 
 import java.util.Date;
 import java.util.TimerTask;
+
 
 /**
  * This class represents a single TAM in the experiment.
@@ -18,10 +22,13 @@ import java.util.TimerTask;
  *
  * Note: everything in this class MUST be synchronized to render it thread-safe
  */
-public class TAM
+public class TAM implements TAMInterface
 {
     // Xbee network id. Up to 20 characters. In case of the TAM, this must be "TAMXX" with XX being a 2-digit number
     private String id;
+
+    // coordinator that handles this TAM
+    private Coordinator coordinator;
 
     // 64bit address of the TAM in the mesh network.
     private XBeeAddress64 address64;
@@ -64,15 +71,17 @@ public class TAM
      *  1) the coordinator receives a heartbeat of an unknown TAM
      *  2) a unknown TAM replies to the node discover command
      * @param id            id of the TAM
+     * @param coordinator   coordinator
      * @param address64     64bit Xbee address of the TAM
      */
-    public TAM(String id, XBeeAddress64 address64)
+    public TAM(String id, Coordinator coordinator, XBeeAddress64 address64)
     {
         this.address64 = address64;
+        this.coordinator = coordinator;
 
         this.firstSeenTimestamp = new Date().getTime();
 
-        this.ledColor = new LedColor(0);
+        this.ledColor = null;
         this.ledColorLastUpdated = 0;
 
         this.robotPresent = false;
@@ -85,20 +94,111 @@ public class TAM
         setId(id);
     }
 
+
+    /***************************************************************************
+     *
+     * Methods below implement TAM interface
+     *
+     ***************************************************************************/
+
     /**
      * Returns the color of the RGB LEDs of the TAM as currently known.
-     * @return LedColor object reflecting the 24bit color
+     * @return LedColor object reflecting the 24bit color, or null if TAM didn't report status yet
      */
+    @Override
     public synchronized LedColor getLedColor()
     {
         return ledColor;
     }
 
     /**
+     * Sets a new LED color.
+     * Update is ignored if LED color does not change.
+     * @param ledColor  LedColor object reflecting the 24bit color
+     */
+    @Override
+    public void setLedColor(LedColor ledColor)
+    {
+        coordinator.sendSetLedsCommand(this, ledColor);
+    }
+
+    /**
+     * Returns true if there is currently a robot in the TAM.
+     * @return true if there is currently a robot in the TAM
+     */
+    @Override
+    public synchronized boolean isRobotPresent()
+    {
+        return robotPresent;
+    }
+
+    /**
+     * Returns the id of the TAM.
+     *  - it's TAMXX with XX being a 2-digit unique integer; or
+     *  - it's the last 5 characters of the 64bit address if the id hasn't been resolved yet
+     * @return id of TAM as String 5 characters long.
+     */
+    @Override
+    public synchronized String getId()
+    {
+        return id;
+    }
+
+    /**
+     * Returns the data received from the robot currently in the TAM.
+     * @return the data received from the robot currently in the TAM.
+     */
+    @Override
+    public synchronized int getRobotDataReceived()
+    {
+        return robotData;
+    }
+
+    /**
+     * Sets a value for the robotData.
+     * Update is ignored if data did not change
+     * @param robotData new robotData value
+     */
+    @Override
+    public void setRobotDataToSend(int robotData)
+    {
+        coordinator.sendWriteRobotCommand(this, robotData);
+    }
+
+    /**
+     * Returns the user-defined controller of the TAM.
+     * @return controller of the TAM
+     */
+    @Override
+    public synchronized ControllerInterface getController()
+    {
+        return controller;
+    }
+
+    /**
+     * Sets the user-defined controller of the TAM.
+     * The controller should define a step() function that controls the behavior of the TAM.
+     * @see ControllerInterface
+     * @param controller  user-defined controller of the TAM
+     */
+    @Override
+    public synchronized void setController(ControllerInterface controller)
+    {
+        this.controller = controller;
+    }
+
+
+    /***************************************************************************
+     *
+     * Methods below are only used by the coordinator
+     *
+     ***************************************************************************/
+
+    /**
      * Returns the timestamp of the last update of the LED color.
      * @return timestamp of last update
      */
-    public synchronized long getLedColorLastUpdated()
+    protected synchronized long getLedColorLastUpdated()
     {
         return ledColorLastUpdated;
     }
@@ -108,7 +208,7 @@ public class TAM
      * Update is ignored if LED color does not change
      * @param ledColor  LedColor object reflecting the 24bit color
      */
-    public synchronized void updateLedColor(LedColor ledColor)
+    protected synchronized void updateLedColor(LedColor ledColor)
     {
         // check if we're actually trying to set a new color
         // ignore this check if we never received an update
@@ -117,15 +217,6 @@ public class TAM
             this.ledColor = ledColor;
             this.ledColorLastUpdated = new Date().getTime();
         }
-    }
-
-    /**
-     * Returns true if there is currently a robot in the TAM.
-     * @return true if there is currently a robot in the TAM
-     */
-    public synchronized boolean isRobotPresent()
-    {
-        return robotPresent;
     }
 
     /**
@@ -143,7 +234,7 @@ public class TAM
      * Update is ignored if flag did not change
      * @param robotPresent  new robotPresent flag, true if robot is in TAM
      */
-    public synchronized void updateRobotPresent(boolean robotPresent)
+    protected synchronized void updateRobotPresent(boolean robotPresent)
     {
         if (this.robotPresent != robotPresent)
         {
@@ -153,25 +244,14 @@ public class TAM
     }
 
     /**
-     * Returns the Xbee network id of the TAM.
-     *  - it's TAMXX with XX being a 2-digit unique integer; or
-     *  - it's the last 5 characters of the 64bit address if the id hasn't been resolved yet
-     * @return id of TAM as String 5 characters long.
-     */
-    public synchronized String getId()
-    {
-        return id;
-    }
-
-    /**
      * Sets the id of te TAM. TAM ids are always 5 characters:
      *  - it's TAMXX with XX being a 2-digit unique integer; or
      *  - it's the last 5 characters of the 64bit address if the id hasn't been resolved yet
      * Updated using data from a node discovery request.
-     * @see be.ac.ulb.iridia.tam.common.coordinator.ATCommandPacketListener
+     * @see be.ac.ulb.iridia.tam.coordinator.ATCommandPacketListener
      * @param id  id of tam if resolved already, else null
      */
-    public synchronized void setId(String id)
+    protected synchronized void setId(String id)
     {
         if (id == null)
         {
@@ -196,7 +276,7 @@ public class TAM
      * @return timestamp of the first time the coordinator has seen this TAM on the network
      */
     @SuppressWarnings("unused")
-    public synchronized long getFirstSeenTimestamp()
+    protected synchronized long getFirstSeenTimestamp()
     {
         return firstSeenTimestamp;
     }
@@ -206,7 +286,7 @@ public class TAM
      * @return timestamp of the last time the coordinator has seen this TAM on the network
      */
     @SuppressWarnings("unused")
-    public synchronized long getLastSeenTimestamp()
+    protected synchronized long getLastSeenTimestamp()
     {
         return lastSeenTimestamp;
     }
@@ -215,7 +295,7 @@ public class TAM
      * Updates the timestamp of the last time the coordinator has seen this TAM on the network.
      * Sets timestamp to current time.
      */
-    public synchronized void updateLastSeenTimestamp()
+    protected synchronized void updateLastSeenTimestamp()
     {
         this.lastSeenTimestamp = new Date().getTime();
     }
@@ -237,7 +317,7 @@ public class TAM
      * @param data1  LSB of the voltage
      * @param data2  MSB of the voltage
      */
-    public synchronized void setVoltage(int data1, int data2)
+    protected synchronized void updateVoltage(int data1, int data2)
     {
         this.voltage = ((data1 & 0xff) + ((data2 & 0xff) << 8)) / 1000.0;
     }
@@ -247,7 +327,7 @@ public class TAM
      * Return null if no unacknowledged command has been sent.
      * @return current timer task or null
      */
-    public synchronized TimerTask getSetLedsCmdTimeoutTask()
+    protected synchronized TimerTask getSetLedsCmdTimeoutTask()
     {
         return setLedsCmdTimeoutTask;
     }
@@ -257,7 +337,7 @@ public class TAM
      * Set null last command sent has been acknowledged.
      * @param setLedsCmdTimeoutTask  timer task for timeout or null
      */
-    public synchronized void setSetLedsCmdTimeoutTask(TimerTask setLedsCmdTimeoutTask)
+    protected synchronized void setSetLedsCmdTimeoutTask(TimerTask setLedsCmdTimeoutTask)
     {
         this.setLedsCmdTimeoutTask = setLedsCmdTimeoutTask;
     }
@@ -267,7 +347,7 @@ public class TAM
      * Return null if no unacknowledged command has been sent.
      * @return current timer task or null
      */
-    public synchronized TimerTask getWriteRobotCmdTimeoutTask()
+    protected synchronized TimerTask getWriteRobotCmdTimeoutTask()
     {
         return writeRobotCmdTimeoutTask;
     }
@@ -277,29 +357,32 @@ public class TAM
      * Set null last command sent has been acknowledged.
      * @param writeRobotCmdTimeoutTask  timer task for timeout or null
      */
-    public synchronized void setWriteRobotCmdTimeoutTask(TimerTask writeRobotCmdTimeoutTask)
+    protected synchronized void setWriteRobotCmdTimeoutTask(TimerTask writeRobotCmdTimeoutTask)
     {
         this.writeRobotCmdTimeoutTask = writeRobotCmdTimeoutTask;
     }
 
     /**
-     * Returns the user-defined controller of the TAM.
-     * @return controller of the TAM
+     * Sets a value for the robotData and updates the timestamp accordingly.
+     * Update is ignored if data did not change
+     * @param robotData new robotData value
      */
-    public synchronized ControllerInterface getController()
-    {
-        return controller;
+    protected void updateRobotData(int robotData) {
+        if (this.robotData != robotData || this.robotDataLastUpdated == 0)
+        {
+            this.robotData = robotData;
+            this.robotDataLastUpdated = new Date().getTime();
+        }
     }
 
     /**
-     * Sets the user-defined controller of the TAM.
-     * The controller should define a step() function that controls the behavior of the TAM.
-     * @see ControllerInterface
-     * @param controller  user-defined controller of the TAM
+     * Gets the the timestamp of the last update of the robotData value.
+     * @return timestamp of last update
      */
-    public synchronized void setController(ControllerInterface controller)
+    @SuppressWarnings("unused")
+    protected synchronized long getRobotDataLastUpdated()
     {
-        this.controller = controller;
+        return robotDataLastUpdated;
     }
 
     /**
@@ -319,52 +402,5 @@ public class TAM
                 ", robotPresentLastUpdated=" + robotPresentLastUpdated +
                 ", robotData=" + robotData +
                 ", robotDataLastUpdate=" + robotDataLastUpdated;
-    }
-
-    /**
-     * Returns a string representation of the state of the TAM.
-     * The state led color and the robot presence, as reported by the TAM.
-     * Additionally, the function reports the voltage.
-     * @return string representation of the state of the TAM
-     */
-    @SuppressWarnings("unused")
-    public String statusToString()
-    {
-        return "voltage=" + voltage +
-                "V, ledColor=(" + ledColor +
-                "), robotPresent=" + robotPresent +
-                ", robotData=" + robotData;
-    }
-    
-    /**
-     * Sets a value for the robotData and updates the timestamp accordingly.
-     * Update is ignored if data did not change
-     * @param robotData new robotData value
-     */
-	public void updateRobotData(int robotData) {
-		if (this.robotData != robotData || this.robotDataLastUpdated == 0)
-        {
-            this.robotData = robotData;
-            this.robotDataLastUpdated = new Date().getTime();
-        }
-	}
-	
-	/**
-     * Returns the data received from the robot currently in the TAM.
-     * @return the data received from the robot currently in the TAM.
-     */
-    public synchronized int getRobotData()
-    {
-        return robotData;
-    }
-
-    /**
-     * Gets the the timestamp of the last update of the robotData value.
-     * @return timestamp of last update
-     */
-    @SuppressWarnings("unused")
-    public synchronized long getRobotDataLastUpdated()
-    {
-        return robotDataLastUpdated;
     }
 }

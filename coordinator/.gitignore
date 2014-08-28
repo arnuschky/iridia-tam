@@ -3,6 +3,7 @@
 *.log
 out
 build
-*.log.[1-9][0-9]*
+*.log.[1-9]*
 .project
 .classpath
+bin

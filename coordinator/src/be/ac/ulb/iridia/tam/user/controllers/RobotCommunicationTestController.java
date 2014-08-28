@@ -1,10 +1,10 @@
 package be.ac.ulb.iridia.tam.user.controllers;
 
-import be.ac.ulb.iridia.tam.common.coordinator.Coordinator;
-import be.ac.ulb.iridia.tam.common.tam.ControllerInterface;
-import be.ac.ulb.iridia.tam.common.tam.LedColor;
-import be.ac.ulb.iridia.tam.common.tam.TAM;
+import be.ac.ulb.iridia.tam.common.AbstractController;
+import be.ac.ulb.iridia.tam.common.LedColor;
+import be.ac.ulb.iridia.tam.common.TAMInterface;
 import org.apache.log4j.Logger;
+
 
 /**
  * This controller is used to test the communication to and from a robot.
@@ -13,7 +13,7 @@ import org.apache.log4j.Logger;
  *  - it writes a random number to it;
  *  - it then reads back this value;
  */
-public class RobotCommunicationTestController implements ControllerInterface
+public class RobotCommunicationTestController extends AbstractController
 {
     // colors of the RGB leds used (0x19 max value to keep eyes safe)
     public final static LedColor LED_RED   = new LedColor(0x19000000);
@@ -30,24 +30,21 @@ public class RobotCommunicationTestController implements ControllerInterface
     	READ_RAND,
     	DONE
     }
-    
-    // coordinator
-    private Coordinator coordinator;
+
     // current state of the FSM that controls the TAM
     private TAMState currentState;
     // TAM this controller is attached two
-    private TAM tam;
-    // random value used for testing
-    private int randomValue = 0; 
+    private TAMInterface tam;
+
 
     /**
      * Sets up the controller.
-     * @param coordinator  coordinator that handles the networking
+     * @param randomSeed   seed for the prng
      * @param tam          TAM this controller should be attached to
      */
-    public RobotCommunicationTestController(Coordinator coordinator, TAM tam)
+    public void init(long randomSeed, TAMInterface tam)
     {
-        this.coordinator = coordinator;
+        super.init(randomSeed);
         this.tam = tam;
         this.currentState = TAMState.READ_ID;
 
@@ -66,18 +63,18 @@ public class RobotCommunicationTestController implements ControllerInterface
         case READ_ID:
 	        if(tam.isRobotPresent()){ // if there is a robot in the tam
 	        	//try to read a value from it
-	        	log.info("ID from robot: " + tam.getRobotData());
-	        	if (tam.getRobotData() == 5)
+	        	log.info("ID from robot: " + tam.getRobotDataReceived());
+	        	if (tam.getRobotDataReceived() == 5)
 	        		currentState = TAMState.WRITE_RAND;
 	        }
 	        break;
 	     
         case WRITE_RAND:	       
         	if(tam.isRobotPresent()){ // if there is a robot in the tam
-        		randomValue = 37;
+                int randomValue = 37;
         		//sends a random value between 0 and 10       
         		log.info("Sending " + randomValue +" to robot... ");
-        		coordinator.sendWriteRobotCommand(tam, randomValue);
+                tam.setRobotDataToSend(randomValue);
         		log.info("...done");
         		currentState = TAMState.READ_RAND;
         	}
@@ -86,12 +83,12 @@ public class RobotCommunicationTestController implements ControllerInterface
         case READ_RAND:
         	if(tam.isRobotPresent()){ // if there is a robot in the tam
 	        	//try to read a value from it
-        		int value = tam.getRobotData();
+        		int value = tam.getRobotDataReceived();
 	        	log.info("Random value from robot: " + value);
 	        	if (value == 37){
 	        		// it works
 	        		log.info("Test success");
-	        		coordinator.sendSetLedsCommand(tam, LED_GREEN);
+                    tam.setLedColor(LED_GREEN);
 	        		currentState = TAMState.DONE;
 	        	}
 	        }

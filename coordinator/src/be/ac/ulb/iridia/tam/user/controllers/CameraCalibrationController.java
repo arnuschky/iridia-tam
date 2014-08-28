@@ -1,16 +1,16 @@
 package be.ac.ulb.iridia.tam.user.controllers;
 
-import be.ac.ulb.iridia.tam.common.coordinator.Coordinator;
-import be.ac.ulb.iridia.tam.common.tam.ControllerInterface;
-import be.ac.ulb.iridia.tam.common.tam.LedColor;
-import be.ac.ulb.iridia.tam.common.tam.TAM;
+import be.ac.ulb.iridia.tam.common.AbstractController;
+import be.ac.ulb.iridia.tam.common.LedColor;
+import be.ac.ulb.iridia.tam.common.TAMInterface;
 import org.apache.log4j.Logger;
+
 
 /**
  * This controller is used to calibrate the camera of the epuck robots
  * The controller keeps the LEDs of the TAM on with a red color.
  */
-public class CameraCalibrationController implements ControllerInterface
+public class CameraCalibrationController extends AbstractController
 {
     // colors of the RGB leds used (0x19 max value to keep eyes safe)
     public final static LedColor LED_RED   = new LedColor(0x19000000);
@@ -24,22 +24,20 @@ public class CameraCalibrationController implements ControllerInterface
     {
     	LEDS_ON,
     }
-    
-    // coordinator
-    private Coordinator coordinator;
+
     // current state of the FSM that controls the TAM
     private TAMState currentState;
     // TAM this controller is attached two
-    private TAM tam;
+    private TAMInterface tam;
 
     /**
      * Sets up the controller.
-     * @param coordinator  coordinator that handles the networking
+     * @param randomSeed   seed for the prng
      * @param tam          TAM this controller should be attached to
      */
-    public CameraCalibrationController(Coordinator coordinator, TAM tam)
+    public void init(long randomSeed, TAMInterface tam)
     {
-        this.coordinator = coordinator;
+        super.init(randomSeed);
         this.tam = tam;
         this.currentState = TAMState.LEDS_ON;
 
@@ -54,15 +52,14 @@ public class CameraCalibrationController implements ControllerInterface
         log.debug("============== Stepping "+tam.getId()+" currentState "+currentState+ " ================");
         switch (getState())
         {
-        
-        case LEDS_ON:
-        	if (!tam.getLedColor().equals(LED_RED))
-            {
-        		coordinator.sendSetLedsCommand(tam, LED_RED);
-            }	
-	        
-	        break;        
-        }    
+
+            case LEDS_ON:
+                if (tam.getLedColor() == null && tam.getLedColor().equals(LED_RED))
+                {
+                    tam.setLedColor(LED_RED);
+                }
+                break;
+        }
     }
     
     /**
@@ -73,5 +70,4 @@ public class CameraCalibrationController implements ControllerInterface
     {
         return currentState;
     }
-
 }

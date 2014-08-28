@@ -1,7 +1,7 @@
-package be.ac.ulb.iridia.tam.common.coordinator;
+package be.ac.ulb.iridia.tam.coordinator;
 
-import be.ac.ulb.iridia.tam.common.tam.LedColor;
-import be.ac.ulb.iridia.tam.common.tam.TAM;
+import be.ac.ulb.iridia.tam.common.ExperimentInterface;
+import be.ac.ulb.iridia.tam.common.LedColor;
 import com.rapplogic.xbee.api.*;
 import com.rapplogic.xbee.api.digimesh.DMTxRequest;
 import com.rapplogic.xbee.api.digimesh.DMTxStatusResponse;
@@ -10,7 +10,7 @@ import org.apache.log4j.Logger;
 import sun.misc.Signal;
 import sun.misc.SignalHandler;
 
-import java.util.Random;
+import java.util.Collections;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,7 +42,7 @@ import java.util.concurrent.ConcurrentSkipListSet;
  *  - as response to a command of the coordinator (eg, SET_LEDS command)
  *
  * After initializing the coordinator with the parameters of the Xbee's serial port,
- * the user's main class MUST call the runThreads() method in order to schedule all the
+ * the user's main class MUST call the start() method in order to schedule all the
  * tasks described above and start the packet listeners. After completing these tasks,
  * the coordinator goes into an infinite loop that can be interrupted by calling
  * setShutdownRequested(true).
@@ -115,12 +115,6 @@ public class Coordinator
     // flag that designates if a node discovery is currently running
     private boolean nodeDiscoveryRunning;
 
-    // flag that is true if TAM controllers should be executed
-    private boolean tamControllersEnabled;
-
-    // pseudo-random number generator
-    private Random prng;
-
 
     /**
      * Creates the coordinator and initializes all variables.
@@ -130,20 +124,8 @@ public class Coordinator
      */
     public Coordinator(String device, int baudRate)
     {
-        this(device, baudRate, System.currentTimeMillis());
-    }
-
-    /**
-     * Creates the coordinator and initializes all variables.
-     * @param device      serial device used to access the Xbee module
-     * @param baudRate    speed of serial port used to access the Xbee module
-     * @param randomSeed  long seed for pseudo-random number generator
-     */
-    public Coordinator(String device, int baudRate, long randomSeed)
-    {
         this.device = device;
         this.baudRate = baudRate;
-        this.prng = new Random(randomSeed);
 
         // create global Xbee object
         this.xbee = new XBee();
@@ -152,7 +134,6 @@ public class Coordinator
         setSignalStrength(0);
         setNodeDiscoveryRequested(false);
         setNodeDiscoveryRunning(false);
-        setTamControllersEnabled(true);
 
         // create list of TAMs
         this.listOfTAMs = new ConcurrentHashMap<String, TAM>();
@@ -162,13 +143,12 @@ public class Coordinator
 
         // create queue used for send requests
         this.addressBlacklist = new ConcurrentSkipListSet<String>();
-        for (String address : COORDINATOR_ADDRESSES)
-        {
-            this.addressBlacklist.add(address);
-        }
+        Collections.addAll(this.addressBlacklist, COORDINATOR_ADDRESSES);
 
         // create timer used to schedule all tasks done by the coordinator
         this.timer = new Timer();
+
+        setupShutdownHandlers();
     }
 
     /**
@@ -195,18 +175,9 @@ public class Coordinator
      * The coordinator has a single timer that is used to schedule all tasks.
      * @return timer instance
      */
-    public synchronized Timer getTimer()
+    private synchronized Timer getTimer()
     {
         return timer;
-    }
-
-    /**
-     * Returns the current instance of the pseudo-random generator.
-     * @return pseudo-random generator
-     */
-    public synchronized Random getPrng()
-    {
-        return prng;
     }
 
     /**
@@ -295,27 +266,6 @@ public class Coordinator
     }
 
     /**
-     * Returns true if the execution of TAM controllers is currently enabled.
-     * The default on startup is true.
-     * @return true if execution of TAM controllers is currently enabled
-     */
-    public boolean isTamControllersEnabled()
-    {
-        return tamControllersEnabled;
-    }
-
-    /**
-     * Enables and disables the execution of TAM controllers. This allows
-     * to disable the execution upon start until all required TAMs are
-     * found in the network.
-     * @param tamControllersEnabled  true if execution should be enabled
-     */
-    public void setTamControllersEnabled(boolean tamControllersEnabled)
-    {
-        this.tamControllersEnabled = tamControllersEnabled;
-    }
-
-    /**
      * Method that is triggered on the discovery of a (partially) unknown TAM.
      * The coordinator can discover new TAMs in two ways:
      *  1) by receiving a status update of an unknown TAM @see TAMResponsePacketListener
@@ -357,7 +307,7 @@ public class Coordinator
         else
         {
             // tam is completely unknown, so create a new object and stick it into the database
-            tam = new TAM(id, address64);
+            tam = new TAM(id, this, address64);
             listOfTAMs.put(address, tam);
             log.info("Added TAM with address " + address + " to database.");
         }
@@ -474,6 +424,7 @@ public class Coordinator
      * Note: after sending this command, you have to remove power from the TAM completely before starting up again
      * @throws XBeeException on communication error
      */
+    @SuppressWarnings("unused")
     public synchronized void sendShutdownCommandToAllTAMs() throws XBeeException
     {
         int[] payload = new int[] { PACKET_TYPE_CT_SHUTDOWN };
@@ -541,7 +492,7 @@ public class Coordinator
      * Catch interrupt signals and terminate the application gracefully.
      * TODO: for some reason, this does not work at all!
      */
-    public void setupShutdownHandlers()
+    private void setupShutdownHandlers()
     {
         Runtime.getRuntime().addShutdownHook(new Thread(new Runnable()
         {
@@ -565,30 +516,13 @@ public class Coordinator
     }
 
     /**
-     * Schedules shutdown of the coordinator after a give number of seconds.
-     * @param shutdownAfterSeconds  time after which we shutdown, in seconds
-     */
-    public void scheduleShutdown(final long shutdownAfterSeconds)
-    {
-        getTimer().schedule(new TimerTask()
-        {
-            @Override
-            public void run()
-            {
-                log.fatal(shutdownAfterSeconds + " seconds expired, executing scheduled shutdown of experiment.");
-                setShutdownRequested(true);
-            }
-        }, shutdownAfterSeconds * 1000);
-    }
-
-    /**
      * Primary method of the coordinator.
      * This method schedules all regularly occurring tasks (controller step functions, node discovery requests,
      * send requests in the queue etc) and starts the packet listeners that parse incoming packets.
      * Note: this method does not return until setShutdownRequested(true) is called
      * @throws Exception on Xbee communication failure
      */
-    public void runThreads() throws Exception
+    public void start() throws Exception
     {
         try
         {
@@ -614,15 +548,23 @@ public class Coordinator
                 @Override
                 public void run()
                 {
-                    experiment.step();
-
-                    if (isTamControllersEnabled())
+                    if (experiment.isReady())
                     {
+                        experiment.step();
+
                         for (TAM tam : myListOfTAMs.values())
                         {
                             if (tam.getController() != null)
                                 tam.getController().step();
                         }
+
+
+
+                    }
+
+                    if (experiment.isFinished())
+                    {
+                        setShutdownRequested(true);
                     }
                 }
             }, 0, STEP_INTERVAL);
@@ -713,7 +655,10 @@ public class Coordinator
             }
 
             // call the shutdown action as defined by the experiment
-            experiment.shutdownAction();
+            log.fatal("Shutting down all TAMs...");
+            //sendShutdownCommandToAllTAMs();
+            sendSwitchOffLedsCommandToAllTAMs();
+            log.fatal("Bye bye.");
         }
         catch (XBeeException xbe)
         {

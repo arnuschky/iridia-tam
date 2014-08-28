@@ -1,21 +1,20 @@
 package be.ac.ulb.iridia.tam.user.controllers;
 
-import be.ac.ulb.iridia.tam.common.coordinator.Coordinator;
-import be.ac.ulb.iridia.tam.common.tam.ControllerInterface;
-import be.ac.ulb.iridia.tam.common.tam.LedColor;
-import be.ac.ulb.iridia.tam.common.tam.TAM;
+import be.ac.ulb.iridia.tam.common.AbstractController;
+import be.ac.ulb.iridia.tam.common.LedColor;
+import be.ac.ulb.iridia.tam.common.TAMInterface;
 import org.apache.log4j.Logger;
-
 import java.util.TimerTask;
+
 
 /**
  * This example controller implements a TAM that is independent of other TAMs.
  * The TAM can represent one of two tasks, BLUE or GREEN, each running with a different
  * duration. The controller sets a random task when the TAM is free.
  */
-public class TwoRandomTasksController implements ControllerInterface
+public class RandomTaskController extends AbstractController
 {
-    private final static Logger log = Logger.getLogger(TwoRandomTasksController.class);
+    private final static Logger log = Logger.getLogger(RandomTaskController.class);
 
     // duration of the green task, in milliseconds
     public static final long GREEN_TASK_DURATION = 5 * 1000;
@@ -43,10 +42,8 @@ public class TwoRandomTasksController implements ControllerInterface
         ANNOUNCE_BLUE
     }
 
-    // coordinator
-    private Coordinator coordinator;
     // TAM this controller is attached two
-    private TAM tam;
+    private TAMInterface tam;
     // current state of the FSM that controls the TAM
     private TAMState currentState;
     // current task duration timer (we need the reference to cancel the timer when the robot aborts the task)
@@ -55,12 +52,12 @@ public class TwoRandomTasksController implements ControllerInterface
 
     /**
      * Sets up the controller.
-     * @param coordinator  coordinator that handles the networking
+     * @param randomSeed   seed for the prng
      * @param tam          TAM this controller should be attached to
      */
-    public TwoRandomTasksController(Coordinator coordinator, TAM tam)
+    public void init(long randomSeed, TAMInterface tam)
     {
-        this.coordinator = coordinator;
+        super.init(randomSeed);
         this.tam = tam;
 
         log.info("New TAM controller, starting in task NEW_DISCOVERED");
@@ -82,9 +79,9 @@ public class TwoRandomTasksController implements ControllerInterface
              * We remain in this state until we receive at least one status report from the TAM.
              */
             case NEW_DISCOVERED:
-                if (tam.getLedColorLastUpdated() == 0 || !tam.getLedColor().equals(LED_OFF))
+                if (tam.getLedColor() == null || !tam.getLedColor().equals(LED_OFF))
                 {
-                    coordinator.sendSetLedsCommand(tam, LED_OFF);
+                    tam.setLedColor(LED_OFF);
                 }
                 else
                 {
@@ -97,7 +94,7 @@ public class TwoRandomTasksController implements ControllerInterface
              * We switch to the READY state for that state directly afterwards
              */
             case AVAILABLE:
-                if (coordinator.getPrng().nextInt(2) == 0)
+                if (getPrng().nextInt(2) == 0)
                 {
                     log.info(tam.getId() + ": Announcing green task");
                     setState(TAMState.ANNOUNCE_GREEN);
@@ -115,9 +112,9 @@ public class TwoRandomTasksController implements ControllerInterface
              */
             case ANNOUNCE_GREEN:
                 // set leds according to state (ignored if done already)
-                if (!tam.getLedColor().equals(LED_GREEN))
+                if (tam.getLedColor() == null || !tam.getLedColor().equals(LED_GREEN))
                 {
-                    coordinator.sendSetLedsCommand(tam, LED_GREEN);
+                    tam.setLedColor(LED_GREEN);
                 }
                 // robot starts to work
                 else if (tam.isRobotPresent())
@@ -135,7 +132,7 @@ public class TwoRandomTasksController implements ControllerInterface
                 // set leds according to state (ignored if done already)
                 if (!tam.getLedColor().equals(LED_BLUE))
                 {
-                    coordinator.sendSetLedsCommand(tam, LED_BLUE);
+                    tam.setLedColor(LED_BLUE);
                 }
                 // robot starts to work
                 else if (tam.isRobotPresent())
@@ -155,7 +152,7 @@ public class TwoRandomTasksController implements ControllerInterface
                 // or at least wait for it
                 if (!tam.getLedColor().equals(LED_RED))
                 {
-                    coordinator.sendSetLedsCommand(tam, LED_RED);
+                    tam.setLedColor(LED_RED);
                 }
                 else
                 {
@@ -180,7 +177,7 @@ public class TwoRandomTasksController implements ControllerInterface
                 // or at least wait for it
                 if (!tam.getLedColor().equals(LED_RED))
                 {
-                    coordinator.sendSetLedsCommand(tam, LED_RED);
+                    tam.setLedColor(LED_RED);
                 }
                 else
                 {
@@ -204,7 +201,7 @@ public class TwoRandomTasksController implements ControllerInterface
                 // set leds according to state (ignored if done already)
                 if (!tam.getLedColor().equals(LED_OFF))
                 {
-                    coordinator.sendSetLedsCommand(tam, LED_OFF);
+                    tam.setLedColor(LED_OFF);
                 }
                 else
                 {
@@ -226,7 +223,7 @@ public class TwoRandomTasksController implements ControllerInterface
                 // set leds according to state (ignored if done already)
                 if (!tam.getLedColor().equals(LED_OFF))
                 {
-                    coordinator.sendSetLedsCommand(tam, LED_OFF);
+                    tam.setLedColor(LED_OFF);
                 }
                 break;
         }
@@ -248,7 +245,7 @@ public class TwoRandomTasksController implements ControllerInterface
         // dead time timer setup
         if (state == TAMState.DEAD_TIME)
         {
-            coordinator.getTimer().schedule(new TimerTask()
+            getTimer().schedule(new TimerTask()
             {
                 @Override
                 public void run()
@@ -272,7 +269,7 @@ public class TwoRandomTasksController implements ControllerInterface
                     setState(TAMState.TASK_FINISHED);
                 }
             };
-            coordinator.getTimer().schedule(currentTaskDurationTimer, GREEN_TASK_DURATION);
+            getTimer().schedule(currentTaskDurationTimer, GREEN_TASK_DURATION);
         }
         // blue task duration timer setup
         else if (state == TAMState.WORKING_BLUE)
@@ -288,7 +285,7 @@ public class TwoRandomTasksController implements ControllerInterface
                     setState(TAMState.TASK_FINISHED);
                 }
             };
-            coordinator.getTimer().schedule(currentTaskDurationTimer, BLUE_TASK_DURATION);
+            getTimer().schedule(currentTaskDurationTimer, BLUE_TASK_DURATION);
         }
     }
 
@@ -308,7 +305,7 @@ public class TwoRandomTasksController implements ControllerInterface
     @Override
     public String toString()
     {
-        return "TwoRandomTasksController{tam=" + tam.getId() +
+        return "RandomTaskController{tam=" + tam.getId() +
                 ", currentState=" + currentState + '}';
     }
 }

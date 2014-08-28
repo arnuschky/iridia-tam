@@ -1,4 +1,5 @@
-package be.ac.ulb.iridia.tam.common.tam;
+package be.ac.ulb.iridia.tam.common;
+
 
 /**
  * Led color class.

@@ -1,8 +1,10 @@
 package be.ac.ulb.iridia.tam.user.experiments;
 
-import be.ac.ulb.iridia.tam.common.coordinator.Coordinator;
-import be.ac.ulb.iridia.tam.common.coordinator.ExperimentInterface;
-import be.ac.ulb.iridia.tam.common.tam.TAM;
+import be.ac.ulb.iridia.tam.common.AbstractExperiment;
+import be.ac.ulb.iridia.tam.common.TAMInterface;
+import be.ac.ulb.iridia.tam.coordinator.Coordinator;
+import be.ac.ulb.iridia.tam.common.ExperimentInterface;
+import be.ac.ulb.iridia.tam.coordinator.TAM;
 import be.ac.ulb.iridia.tam.user.controllers.RobotCommunicationTestController;
 import com.rapplogic.xbee.api.XBeeException;
 import org.apache.log4j.Logger;
@@ -16,31 +18,33 @@ import java.util.TimerTask;
  * It then reads the value back.
  * @see RobotCommunicationTestController
  */
-public class RobotCommunicationTestExperiment implements ExperimentInterface
+public class RobotCommunicationTestExperiment extends AbstractExperiment
 {
     private final static Logger log = Logger.getLogger(RobotCommunicationTestExperiment.class);
 
     private final static long EXPERIMENT_DURATION_IN_SECONDS = 600000000;
 
-    // coordinator that handles all the network stuff
-    Coordinator coordinator;
-
 
     /**
-     * Create experiment.
-     * @param coordinator  coordinator object
+     * Initializes experiment.
+     * Sets flags to defaults and initialized the random number generator.
+     * @param randomSeed  seed for the prng, set either constant or use System.currentTimeMillis()
      */
-    public RobotCommunicationTestExperiment(Coordinator coordinator)
+    @Override
+    public void init(long randomSeed)
     {
-        this.coordinator = coordinator;
-    }
+        super.init(randomSeed);
 
-    /**
-     * Called by the coordinator on regular intervals.
-     * Can be used for management of TAMs etc.
-     */
-    public void step()
-    {
+        // request shutdown after EXPERIMENT_DURATION_IN_SECONDS seconds
+        getTimer().schedule(new TimerTask()
+        {
+            @Override
+            public void run()
+            {
+                log.fatal("Experiment duration is over, terminating.");
+                setFinished();
+            }
+        }, EXPERIMENT_DURATION_IN_SECONDS * 1000);
     }
 
     /**
@@ -49,25 +53,14 @@ public class RobotCommunicationTestExperiment implements ExperimentInterface
      * to specific TAMs, thereby giving them the different functionality.
      * @param tam  TAM the coordinator requests a controller for
      */
-    public void attachTAMController(TAM tam)
+    @Override
+    public void attachTAMController(TAMInterface tam)
     {
         // create new controller for a tam
         log.info("Creating new RobotCommunicationTestController for " + tam.getId());
-        tam.setController(new RobotCommunicationTestController(coordinator, tam));
-    }
-
-    /**
-     * Called by the coordinator after it shuts down the main loop.
-     * Used to clean up, save files and, if required, shut down or switch off all TAMs.
-     * @see Coordinator sendShutdownCommandToAllTAMs() and sendSwitchOffLedsCommandToAllTAMs()
-     * @throws XBeeException
-     */
-    public void shutdownAction() throws XBeeException
-    {
-        log.fatal("Shutting down all TAMs...");
-        coordinator.sendShutdownCommandToAllTAMs();
-//        coordinator.sendSwitchOffLedsCommandToAllTAMs();
-        log.fatal("Bye bye.");
+        RobotCommunicationTestController controller = new RobotCommunicationTestController();
+        controller.init(getPrng().nextInt(), tam);
+        tam.setController(controller);
     }
 
     /**
@@ -84,14 +77,12 @@ public class RobotCommunicationTestExperiment implements ExperimentInterface
         Coordinator coordinator = new Coordinator("/dev/ttyUSB1", 9600);
 
         // create our experiment (see above)
-        ExperimentInterface experiment = new RobotCommunicationTestExperiment(coordinator);
+        ExperimentInterface experiment = new RobotCommunicationTestExperiment();
+        experiment.init(System.currentTimeMillis());
         coordinator.setExperiment(experiment);
-
-        // request shutdown after EXPERIMENT_DURATION_IN_SECONDS seconds
-        coordinator.scheduleShutdown(RobotCommunicationTestExperiment.EXPERIMENT_DURATION_IN_SECONDS);
 
         // run the coordinator send and receive threads that handle all Xbee communication
         // NOTE: this will never return, so must be last!
-        coordinator.runThreads();
+        coordinator.start();
     }
 }

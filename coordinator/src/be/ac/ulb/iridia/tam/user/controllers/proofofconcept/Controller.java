@@ -1,9 +1,8 @@
 package be.ac.ulb.iridia.tam.user.controllers.proofofconcept;
 
-import be.ac.ulb.iridia.tam.common.coordinator.Coordinator;
-import be.ac.ulb.iridia.tam.common.tam.ControllerInterface;
-import be.ac.ulb.iridia.tam.common.tam.LedColor;
-import be.ac.ulb.iridia.tam.common.tam.TAM;
+import be.ac.ulb.iridia.tam.common.AbstractController;
+import be.ac.ulb.iridia.tam.common.LedColor;
+import be.ac.ulb.iridia.tam.common.TAMInterface;
 import org.apache.log4j.Logger;
 
 import java.util.ArrayList;
@@ -19,7 +18,7 @@ import java.util.TimerTask;
  * The TAM can take 3 colors: GREEN if free, RED if busy (robot is
  * working) and BLUE if the robot needs to wait).
  */
-public class Controller implements ControllerInterface
+public class Controller extends AbstractController
 {
     private final static Logger log = Logger.getLogger(Controller.class);
 
@@ -35,14 +34,12 @@ public class Controller implements ControllerInterface
     public final static LedColor LED_WAITING     = new LedColor(0x11000700);  // pink
     public final static LedColor LED_NO_TASK     = new LedColor(0x00000000);  // off/black
 
-    // coordinator
-    private Coordinator coordinator;
     // this instance number, only used for logging
-    private final int instance;
+    private int instance;
     // TAM this controller is attached to
-    private TAM tamC1;
-    private TAM tamC2;
-    private TAM tamS;
+    private TAMInterface tamC1;
+    private TAMInterface tamC2;
+    private TAMInterface tamS;
     // current task duration timer (we need the reference to cancel the timer when the robot aborts the task)
     private TimerTask taskDurationTimerC1;
     private TimerTask taskDurationTimerC2;
@@ -58,7 +55,7 @@ public class Controller implements ControllerInterface
     protected final int ROBOT_ID_BIT_MASK = 0x7F;
 
     private final String UNKNOWN_ROBOT_ID = "unknown";
-    private HashMap<TAM, String> robotIds;
+    private HashMap<TAMInterface, String> robotIds;
 
     // possible states of task, no others are possible
     public enum State
@@ -86,14 +83,15 @@ public class Controller implements ControllerInterface
 
     /**
      * Sets up the controller.
-     * @param coordinator  coordinator that handles the networking
+     * @param randomSeed   seed for the random number generator
      * @param tamC1        concurrent task 1
      * @param tamC2        concurrent task 2
      * @param tamS         sequential task 1
      */
-    public Controller(Coordinator coordinator, final int instance, final TAM tamC1, final TAM tamC2, final TAM tamS)
+    public void init(long randomSeed, final int instance, final TAMInterface tamC1, final TAMInterface tamC2, final TAMInterface tamS)
     {
-        this.coordinator = coordinator;
+        super.init(randomSeed);
+
         this.instance = instance;
         this.tamC1 = tamC1;
         this.tamC2 = tamC2;
@@ -110,11 +108,10 @@ public class Controller implements ControllerInterface
         tamScolor = LED_NO_TASK;
 
         // map of tam -> robot ids
-        robotIds = new HashMap<TAM, String>();
+        robotIds = new HashMap<TAMInterface, String>();
         robotIds.put(tamC1, UNKNOWN_ROBOT_ID);
         robotIds.put(tamC2, UNKNOWN_ROBOT_ID);
         robotIds.put(tamS, UNKNOWN_ROBOT_ID);
-
 
         // transition maps
         transitions = new HashMap<String, Transition>();
@@ -231,7 +228,7 @@ public class Controller implements ControllerInterface
                         taskDurationTimerC1 = null;
                     }
                 };
-                getCoordinator().getTimer().schedule(taskDurationTimerC1, WORKING_DURATION);
+                getTimer().schedule(taskDurationTimerC1, WORKING_DURATION);
                 // we set the taskDurationTimer so that we can cancel the timer when the task was aborted
                 taskDurationTimerC2 = new TimerTask()
                 {
@@ -243,7 +240,7 @@ public class Controller implements ControllerInterface
                         taskDurationTimerC2 = null;
                     }
                 };
-                getCoordinator().getTimer().schedule(taskDurationTimerC2, WORKING_DURATION);
+                getTimer().schedule(taskDurationTimerC2, WORKING_DURATION);
             }
         };
 
@@ -493,7 +490,7 @@ public class Controller implements ControllerInterface
                     }
                 };
 
-                getCoordinator().getTimer().schedule(taskDurationTimerS, WORKING_DURATION);
+                getTimer().schedule(taskDurationTimerS, WORKING_DURATION);
 
                 resetRobotId(tamC1);
                 resetRobotId(tamC2);
@@ -624,7 +621,7 @@ public class Controller implements ControllerInterface
                         deadTimeTimer = null;
                     }
                 };
-                getCoordinator().getTimer().schedule(deadTimeTimer, DEAD_TIME_DURATION);
+                getTimer().schedule(deadTimeTimer, DEAD_TIME_DURATION);
 
                 tamC1color = LED_NO_TASK;
                 tamC2color = LED_NO_TASK;
@@ -666,11 +663,11 @@ public class Controller implements ControllerInterface
         log.info("i" + instance + ": New TAM 3-task controller ("+tamC1.getId()+","+tamC2.getId()+","+tamS.getId()+"), starting in state "+ getState());
     }
 
-    private void setLeds(TAM tam, LedColor color)
+    private void setLeds(TAMInterface tam, LedColor color)
     {
-        if (tam.getLedColorLastUpdated() == 0 || !tam.getLedColor().equals(color))
+        if (tam.getLedColor() == null || !tam.getLedColor().equals(color))
         {
-            getCoordinator().sendSetLedsCommand(tam, color);
+            tam.setLedColor(color);
         }
     }
 
@@ -678,12 +675,12 @@ public class Controller implements ControllerInterface
      * Instructs the TAM to communicate with a robot in order to get its id.
      * @param tam  TAM whose robot id to read
      */
-    public void getRobotId(TAM tam)
+    public void getRobotId(TAMInterface tam)
     {
 //        log.debug(tam.getId() + ": Trying to receive robot ID");
-//        log.debug(tam.getId() + ": Robot data: " + tam.getRobotData());
-        if (tam.isRobotPresent() && (tam.getRobotData() & ROBOT_ID_BIT_HEADER) == ROBOT_ID_BIT_HEADER) {
-            int robotId = tam.getRobotData() & ROBOT_ID_BIT_MASK;
+//        log.debug(tam.getId() + ": Robot data: " + tam.getRobotDataReceived());
+        if (tam.isRobotPresent() && (tam.getRobotDataReceived() & ROBOT_ID_BIT_HEADER) == ROBOT_ID_BIT_HEADER) {
+            int robotId = tam.getRobotDataReceived() & ROBOT_ID_BIT_MASK;
             // sanity check
             if (robotId > 20 && robotId < 70) {
                 String robotIdStr = "epuck" + robotId;
@@ -698,7 +695,7 @@ public class Controller implements ControllerInterface
      * Resets the robot id associated with a TAM.
      * @param tam  TAM whose robot id to reset
      */
-    public void resetRobotId(TAM tam)
+    public void resetRobotId(TAMInterface tam)
     {
         if (!robotIds.get(tam).equals(UNKNOWN_ROBOT_ID))
         {
@@ -723,15 +720,6 @@ public class Controller implements ControllerInterface
         setLeds(tamS, tamScolor);
 
 //        log.debug("==============================");
-    }
-
-    /**
-     * Returns the associated coordinator.
-     * @return coordinator that runs the show
-     */
-    public Coordinator getCoordinator()
-    {
-        return coordinator;
     }
 
     /**

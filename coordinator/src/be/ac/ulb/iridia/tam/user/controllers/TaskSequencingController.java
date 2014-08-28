@@ -1,19 +1,18 @@
 package be.ac.ulb.iridia.tam.user.controllers;
 
-import be.ac.ulb.iridia.tam.common.coordinator.Coordinator;
-import be.ac.ulb.iridia.tam.common.tam.ControllerInterface;
-import be.ac.ulb.iridia.tam.common.tam.LedColor;
-import be.ac.ulb.iridia.tam.common.tam.TAM;
-import be.ac.ulb.iridia.tam.user.controllers.RobotCommunicationTestController.TAMState;
+import be.ac.ulb.iridia.tam.common.AbstractController;
+import be.ac.ulb.iridia.tam.common.LedColor;
 
+import be.ac.ulb.iridia.tam.common.TAMInterface;
 import org.apache.log4j.Logger;
+
 
 /**
  * This example controller implements a TAM that is independent of other TAMs.
  * The TAM can represent one of two tasks, BLUE or GREEN, each running with a different
  * duration. The controller sets a random task when the TAM is free.
  */
-public class TaskSequencingController implements ControllerInterface
+public class TaskSequencingController extends AbstractController
 {
     private final static Logger log = Logger.getLogger(TaskSequencingController.class);
     
@@ -32,43 +31,43 @@ public class TaskSequencingController implements ControllerInterface
     public final static LedColor LED_REAL_GREEN = new LedColor(0x00190000);  // orange
     public final static LedColor LED_REAL_BLUE = new LedColor(0x00001900);
     
-    private final int robotIDbitHeader = 0x80;
-    private final int robotIDbitMask = 0x7F;
+    private final static int robotIDbitHeader = 0x80;
+    private final static int robotIDbitMask = 0x7F;
     
-    private final int messageTypeMask = 0xF0;
-    private final int messageContentMask = 0x0F;
-    private final int response = 0x10;
-    private final int actionHeader = 0x20;
-    private final int feedbackHeader = 0x70;
+    private final static int messageTypeMask = 0xF0;
+    private final static int messageContentMask = 0x0F;
+    private final static int response = 0x10;
+    private final static int actionHeader = 0x20;
+    private final static int feedbackHeader = 0x70;
     
-    private final int positiveFeedback = 0x0F;
-    private final int negativeFeedback = 0x00;
+    private final static int positiveFeedback = 0x0F;
+    private final static int negativeFeedback = 0x00;
     
 
-    // coordinator
-    private Coordinator coordinator;
     // TAM this controller is attached two
-    private TAM tam;
+    private TAMInterface tam;
     
     private int sequenceNumber;
     
     private int feedback;
     
     private int RobotID;
-    
+
     private enum GiveFeedbackState {
         RECEIVE_ROBOT_ID, RECEIVE_ACTION, GIVE_FEEDBACK
     }
 
     private GiveFeedbackState giveFeedbackState;
+
+
     /**
      * Sets up the controller.
-     * @param coordinator  coordinator that handles the networking
+     * @param randomSeed   seed for the prng
      * @param tam          TAM this controller should be attached to
      */
-    public TaskSequencingController(Coordinator coordinator, TAM tam, int sequenceNumber)
+    public void init(long randomSeed, TAMInterface tam, int sequenceNumber)
     {
-        this.coordinator = coordinator;
+        super.init(randomSeed);
         this.tam = tam;
         this.sequenceNumber = sequenceNumber;
         this.giveFeedbackState = GiveFeedbackState.RECEIVE_ROBOT_ID;
@@ -85,14 +84,14 @@ public class TaskSequencingController implements ControllerInterface
     	if(tam.isRobotPresent()){ // if there is a robot in the tam
         	// Switch LEDs off
         	//log.info("Robot inside");
-        	coordinator.sendSetLedsCommand(tam, LED_OFF);
+            tam.setLedColor(LED_OFF);
         	switch(giveFeedbackState){
 	        	case RECEIVE_ROBOT_ID:{
 	        		log.info("State: receive robot ID");
-	        		log.info("Robot data: " + tam.getRobotData());
-	        		if ((tam.getRobotData() & robotIDbitHeader) == robotIDbitHeader){
-	        			log.info("ID from robot: " + (tam.getRobotData() & robotIDbitMask));
-	        			RobotID = (tam.getRobotData() & robotIDbitMask);
+	        		log.info("Robot data: " + tam.getRobotDataReceived());
+	        		if ((tam.getRobotDataReceived() & robotIDbitHeader) == robotIDbitHeader){
+	        			log.info("ID from robot: " + (tam.getRobotDataReceived() & robotIDbitMask));
+	        			RobotID = (tam.getRobotDataReceived() & robotIDbitMask);
 	        			log.info("Going to RECEIVE_ACTION state");
 	        			giveFeedbackState = GiveFeedbackState.RECEIVE_ACTION;
 	        		}
@@ -100,10 +99,10 @@ public class TaskSequencingController implements ControllerInterface
 	        	break;
 	        	case RECEIVE_ACTION:{
 	        		log.info("State: receive action");
-	        		coordinator.sendWriteRobotCommand(tam, response);
-	        		if ((tam.getRobotData() & messageTypeMask) == actionHeader){
-	        			log.info("Tam " + sequenceNumber + " Action from robot: " + (tam.getRobotData() & messageContentMask));
-	        			if((tam.getRobotData() & messageContentMask) == sequenceNumber){
+                    tam.setRobotDataToSend(response);
+	        		if ((tam.getRobotDataReceived() & messageTypeMask) == actionHeader){
+	        			log.info("Tam " + sequenceNumber + " Action from robot: " + (tam.getRobotDataReceived() & messageContentMask));
+	        			if((tam.getRobotDataReceived() & messageContentMask) == sequenceNumber){
 	        				log.info("Right action. Go to GIVE positive FEEDBACK");
 	        				feedback = positiveFeedback;
 	        				giveFeedbackState = GiveFeedbackState.GIVE_FEEDBACK;
@@ -117,7 +116,7 @@ public class TaskSequencingController implements ControllerInterface
 	        	break;
 	        	case GIVE_FEEDBACK:{
 	        		log.info("State: give feedback");
-	        		coordinator.sendWriteRobotCommand(tam, (feedbackHeader | feedback));
+                    tam.setRobotDataToSend(feedbackHeader | feedback);
 	        	}
 	        	break;
         	}
@@ -133,25 +132,25 @@ public class TaskSequencingController implements ControllerInterface
     	switch(sequenceNumber){
 	    	case 1:{
 	    		if(!tam.isRobotPresent()){
-		        	coordinator.sendSetLedsCommand(tam, LED_RED);
+                    tam.setLedColor(LED_RED);
 		        }
 	    	}
 	    	break;
 	    	case 2:{
 	    		if(!tam.isRobotPresent()){
-		        	coordinator.sendSetLedsCommand(tam, LED_GREEN);
+                    tam.setLedColor(LED_GREEN);
 		        }
 	    	}
 	    	break;
 	    	case 3:{
 	    		if(!tam.isRobotPresent()){
-		        	coordinator.sendSetLedsCommand(tam, LED_BLUE);
+                    tam.setLedColor(LED_BLUE);
 		        }
 	    	}
 	    	break;
 	    	case 4: {
 	    		if(!tam.isRobotPresent()){
-		        	coordinator.sendSetLedsCommand(tam, LED_TEST);
+                    tam.setLedColor(LED_TEST);
 		        }
 	    	}
 	    	break;
